@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import norm
+from scipy.optimize import minimize_scalar
 from typing import Optional, Dict, Union
 
 def VaR(
@@ -43,6 +44,31 @@ def ES(
     else:
         raise NotImplementedError(f"Method '{method}' is not implemented.")
 
+def EVaR(
+    weights: np.ndarray,
+    R: np.ndarray,
+    p: float = 0.95
+) -> float:
+    """
+    Calculate Entropic Value at Risk (EVaR).
+    EVaR_p(X) = inf_{z>0} { z * ln( E[exp(X/z)] / (1-p) ) }
+    where X is the loss (-returns).
+    """
+    T = R.shape[0]
+    losses = -(R @ weights)
+    alpha = 1 - p
+    
+    def evar_obj(z):
+        if z <= 0: return 1e10
+        # Use log-sum-exp trick for numerical stability
+        m = np.max(losses / z)
+        val = z * (m + np.log(np.sum(np.exp(losses / z - m)) / (T * alpha)))
+        return val
+
+    # Solve the 1D optimization problem for z
+    res = minimize_scalar(evar_obj, bounds=(1e-6, 100), method='bounded')
+    return float(res.fun)
+
 def risk_contribution(
     weights: np.ndarray,
     sigma: np.ndarray,
@@ -71,35 +97,21 @@ def max_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
     return -np.min(drawdowns)
 
 def average_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
-    """
-    Calculate the Average Drawdown matching R PerformanceAnalytics behavior.
-    Average of the trough values of all drawdown periods.
-    """
     p_returns = R @ weights
     drawdowns = calculate_drawdowns(p_returns)
-    
-    # Identify trough values of drawdown periods
-    # A trough is the minimum value within a period where drawdown < 0
     troughs = []
     in_drawdown = False
     current_min = 0.0
-    
     for d in drawdowns:
         if d < 0:
             if not in_drawdown:
-                in_drawdown = True
-                current_min = d
+                in_drawdown = True; current_min = d
             else:
                 current_min = min(current_min, d)
         else:
             if in_drawdown:
-                troughs.append(current_min)
-                in_drawdown = False
-                
-    # If the last period is in drawdown
-    if in_drawdown:
-        troughs.append(current_min)
-        
+                troughs.append(current_min); in_drawdown = False
+    if in_drawdown: troughs.append(current_min)
     if not troughs: return 0.0
     return -np.mean(troughs)
 

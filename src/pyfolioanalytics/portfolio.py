@@ -61,6 +61,12 @@ class Portfolio:
                 constraint.update({"ptc": ptc})
         elif type == "position_limit":
             constraint.update({"max_pos": kwargs.get("max_pos"), "max_pos_long": kwargs.get("max_pos_long"), "max_pos_short": kwargs.get("max_pos_short")})
+        elif type == "robust":
+            # Uncertainty radius for mean returns
+            delta_mu = kwargs.get("delta_mu", 0.0)
+            if isinstance(delta_mu, (int, float)):
+                delta_mu = np.full(nassets, float(delta_mu))
+            constraint.update({"delta_mu": pd.Series(delta_mu, index=asset_names)})
         else:
             constraint.update(kwargs)
         self.constraints.append(constraint)
@@ -93,7 +99,7 @@ class Portfolio:
             "max": pd.Series(np.full(nassets, np.inf), index=asset_names),
             "groups": None, "turnover_target": None, "ptc": None, "weight_initial": None,
             "max_pos": None, "max_pos_long": None, "max_pos_short": None,
-            "min_return": None
+            "min_return": None, "delta_mu": None
         }
         for constr in self.constraints:
             if not constr.get("enabled", True): continue
@@ -120,6 +126,8 @@ class Portfolio:
                 out["max_pos_short"] = constr.get("max_pos_short")
             elif ctype == "return":
                 out["min_return"] = constr.get("min_return")
+            elif ctype == "robust":
+                out["delta_mu"] = constr.get("delta_mu")
         return out
 
     def copy(self):
@@ -130,36 +138,20 @@ class Portfolio:
         return f"Portfolio(name={self.name}, assets={list(self.assets.keys())})"
 
 class RegimePortfolio:
-    """
-    Class to hold multiple portfolios corresponding to different market regimes.
-    """
     def __init__(self, portfolios: List[Portfolio], regime_labels: List[Any]):
-        if len(portfolios) != len(regime_labels):
-            raise ValueError("Number of portfolios must match number of regime labels.")
+        if len(portfolios) != len(regime_labels): raise ValueError("Number of portfolios must match number of regime labels.")
         self.portfolios = dict(zip(regime_labels, portfolios))
         self.regime_labels = regime_labels
-
     def get_portfolio(self, regime: Any) -> Portfolio:
-        if regime not in self.portfolios:
-            # Fallback to the first one if regime not found?
-            return next(iter(self.portfolios.values()))
+        if regime not in self.portfolios: return next(iter(self.portfolios.values()))
         return self.portfolios[regime]
-
-    def __repr__(self):
-        return f"RegimePortfolio(regimes={self.regime_labels})"
+    def __repr__(self): return f"RegimePortfolio(regimes={self.regime_labels})"
 
 class MultLayerPortfolio:
-    """
-    Class to hold a hierarchical portfolio structure.
-    """
     def __init__(self, root_portfolio: Portfolio):
         self.root = root_portfolio
-        self.sub_portfolios = {} # Map meta-asset name to Portfolio
-
+        self.sub_portfolios = {}
     def add_sub_portfolio(self, meta_asset_name: str, sub_portfolio: Portfolio):
-        if meta_asset_name not in self.root.assets:
-            raise ValueError(f"'{meta_asset_name}' must be defined as an asset in the root portfolio.")
+        if meta_asset_name not in self.root.assets: raise ValueError(f"'{meta_asset_name}' must be defined as an asset in the root portfolio.")
         self.sub_portfolios[meta_asset_name] = sub_portfolio
-
-    def __repr__(self):
-        return f"MultLayerPortfolio(root={self.root.name}, sub={list(self.sub_portfolios.keys())})"
+    def __repr__(self): return f"MultLayerPortfolio(root={self.root.name}, sub={list(self.sub_portfolios.keys())})"
