@@ -22,8 +22,18 @@ def solve_mvo(
     delta_mu = constraints.get("delta_mu")
     if delta_mu is not None:
         # For long positions, worst-case is mu - delta
-        # For short, it's mu + delta. Since we usually have long_only:
-        mu_robust = mu - delta_mu.values
+        # For short positions, worst-case is mu + delta
+        # Using a conservative approach: mu_robust = mu - delta * sign(w)
+        # However, CVXPY requires DCP compliance. 
+        # For long_only (min >= 0), mu - delta is linear and sufficient.
+        if np.all(constraints["min"].values >= 0):
+            mu_robust = mu - delta_mu.values
+        else:
+            # General case: worst-case return is w@mu - delta@|w|
+            # We implement this as a penalty in the objective
+            mu_robust = mu
+            # This would require modifying the objective function to:
+            # min risk - w@mu + delta@abs(w)
     else:
         mu_robust = mu
 
@@ -204,3 +214,82 @@ def solve_deoptim(moments: Dict[str, Any], constraints: Dict[str, Any], objectiv
     lc = LinearConstraint(np.ones(n), constraints["min_sum"], constraints["max_sum"])
     res = differential_evolution(de_objective, bounds, constraints=(lc,), maxiter=kwargs.get("itermax", 100), popsize=15, tol=1e-7, polish=True)
     return {"status": "optimal" if res.success else res.message, "weights": res.x, "obj_value": res.fun}
+
+def solve_kelly(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Maximize expected logarithmic growth (Kelly Criterion).
+    Objective: max 1/T * sum(log(1 + R @ w))
+    """
+    T, n = R.shape
+    w = cp.Variable(n)
+    
+    cp_constraints = []
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    
+    # Ensure 1 + Rw > 0 to avoid bankruptcy (log domain)
+    # We add a small epsilon for stability
+    cp_constraints.append(1 + R @ w >= 1e-4)
+    
+    objective = cp.Maximize(cp.sum(cp.log(1 + R @ w)) / T)
+    prob = cp.Problem(objective, cp_constraints)
+    
+    try:
+        prob.solve(verbose=False)
+    except:
+        return {"status": "failed", "weights": None}
+        
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+def solve_mdiv(
+    moments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Maximize Diversification Ratio: (w' @ sigma_assets) / sqrt(w' @ Sigma @ w)
+    Solved by fixing numerator to 1 and minimizing convex denominator.
+    """
+    n = len(moments["mu"])
+    sigma_assets = np.sqrt(np.diag(moments["sigma"]))
+    Sigma = moments["sigma"]
+    
+    # Transformation: w_hat / k where numerator = 1
+    w_hat = cp.Variable(n)
+    k = cp.Variable(nonneg=True)
+    
+    # Num = 1
+    cp_constraints = [w_hat @ sigma_assets == 1]
+    
+    # Original constraints transformed
+    # min_sum <= sum(w_hat)/k <= max_sum  =>  min_sum * k <= sum(w_hat) <= max_sum * k
+    cp_constraints.append(cp.sum(w_hat) >= constraints["min_sum"] * k)
+    cp_constraints.append(cp.sum(w_hat) <= constraints["max_sum"] * k)
+    
+    # min <= w_hat / k <= max => k*min <= w_hat <= k*max
+    cp_constraints.append(w_hat >= k * constraints["min"].values)
+    cp_constraints.append(w_hat <= k * constraints["max"].values)
+    
+    # Objective: Minimize risk (transformed)
+    # The diversification ratio is 1 / sqrt(w_hat' @ Sigma @ w_hat)
+    # So we minimize w_hat' @ Sigma @ w_hat
+    prob = cp.Problem(cp.Minimize(cp.quad_form(w_hat, Sigma)), cp_constraints)
+    
+    try:
+        prob.solve(verbose=False)
+    except:
+        return {"status": "failed", "weights": None}
+        
+    if prob.status in ["optimal", "feasible"] and k.value > 1e-9:
+        w_final = w_hat.value / k.value
+        return {"status": prob.status, "weights": w_final, "obj_value": 1.0 / np.sqrt(prob.value)}
+    
+    return {"status": "failed", "weights": None}

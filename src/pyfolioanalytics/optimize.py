@@ -145,6 +145,12 @@ def optimize_portfolio(R: pd.DataFrame, portfolio: Union[Portfolio, MultLayerPor
     # New: Direct EVaR optimization via CVXPY
     if any(obj["name"] == "EVaR" for obj in objectives if obj.get("enabled", True)):
         result = solve_evar(R.values, constraints, objectives, **kwargs)
+    elif optimize_method == "Kelly":
+        from .solvers import solve_kelly
+        result = solve_kelly(R.values, constraints, **kwargs)
+    elif optimize_method == "MDIV":
+        from .solvers import solve_mdiv
+        result = solve_mdiv(moments, constraints, **kwargs)
     else:
         has_risk_budget = any(obj["type"] == "risk_budget" for obj in objectives if obj.get("enabled", True))
         if has_risk_budget or optimize_method == "DEoptim":
