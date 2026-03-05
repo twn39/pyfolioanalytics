@@ -99,20 +99,22 @@ def max_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
 def average_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
     p_returns = R @ weights
     drawdowns = calculate_drawdowns(p_returns)
+    # Identify local troughs
+    # A trough occurs where drawdowns[i] < 0 and it's a local minimum between zero-crossings
+    # Vectorized approach: 
+    is_drawdown = drawdowns < 0
+    # Find start and end of drawdown periods
+    drawdown_change = np.diff(is_drawdown.astype(int), prepend=0, append=0)
+    starts = np.where(drawdown_change == 1)[0]
+    ends = np.where(drawdown_change == -1)[0]
+    
+    if len(starts) == 0:
+        return 0.0
+        
     troughs = []
-    in_drawdown = False
-    current_min = 0.0
-    for d in drawdowns:
-        if d < 0:
-            if not in_drawdown:
-                in_drawdown = True; current_min = d
-            else:
-                current_min = min(current_min, d)
-        else:
-            if in_drawdown:
-                troughs.append(current_min); in_drawdown = False
-    if in_drawdown: troughs.append(current_min)
-    if not troughs: return 0.0
+    for s, e in zip(starts, ends):
+        troughs.append(np.min(drawdowns[s:e]))
+        
     return -np.mean(troughs)
 
 def CDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
