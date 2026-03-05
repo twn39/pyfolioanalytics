@@ -125,3 +125,38 @@ def CDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     cutoff_idx = int(np.ceil((1 - p) * n))
     if cutoff_idx == 0: return -sorted_drawdowns[0]
     return -np.mean(sorted_drawdowns[:cutoff_idx])
+
+def owa_gmd_weights(T: int) -> np.ndarray:
+    """
+    Gini Mean Difference (GMD) OWA weights.
+    Standard GMD risk minimization requires weights to be non-increasing for sorted losses.
+    PO.jl: (4 * (1:T) .- 2 * (T + 1)) / (T * (T - 1)) - these are increasing.
+    We reverse them to make the measure convex for minimization of sorted losses.
+    """
+    t = np.arange(1, T + 1)
+    w = (4 * t - 2 * (T + 1)) / (T * (T - 1))
+    return np.sort(w)[::-1] # Non-increasing: [0.2, ..., -0.2]
+
+def owa_cvar_weights(T: int, p: float = 0.95) -> np.ndarray:
+    """
+    Conditional Value at Risk (CVaR) OWA weights.
+    For non-increasing weights on sorted losses (largest first):
+    w[1:k] = 1/(T*alpha), else 0.
+    """
+    alpha = 1 - p
+    k = int(np.floor(T * alpha))
+    w = np.zeros(T)
+    if k > 0:
+        w[:k] = 1.0 / (T * alpha)
+    if k < T:
+        w[k] = (1.0 - np.sum(w[:k]))
+    # These are [1/k, ..., remainder, 0, ..., 0] -> non-increasing
+    return w
+
+def owa_risk(weights: np.ndarray, R: np.ndarray, owa_weights: np.ndarray) -> float:
+    """
+    Calculate OWA risk: sum(owa_weights * sorted_losses)
+    """
+    losses = -(R @ weights)
+    sorted_losses = np.sort(losses)[::-1] # Largest first
+    return np.dot(owa_weights, sorted_losses)

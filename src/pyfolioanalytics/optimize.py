@@ -3,8 +3,8 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .portfolio import Portfolio, MultLayerPortfolio
 from .moments import set_portfolio_moments
-from .solvers import solve_mvo, solve_nonlinear, solve_deoptim, solve_evar
-from .risk import VaR, ES, risk_contribution, max_drawdown, CDaR, EVaR
+from .solvers import solve_mvo, solve_nonlinear, solve_deoptim, solve_evar, solve_owa
+from .risk import VaR, ES, risk_contribution, max_drawdown, CDaR, EVaR, owa_risk, owa_gmd_weights, owa_cvar_weights
 from .random_portfolios import random_portfolios
 from .ml import hrp_optimization, herc_optimization, nco_optimization
 
@@ -44,6 +44,11 @@ def calculate_objective_measures(
         elif obj_name == "CDaR" and R is not None:
             p = obj.get("arguments", {}).get("p", 0.95)
             measures[obj_name] = CDaR(weights, R, p=p)
+        elif obj_name == "OWA" and R is not None:
+            owa_weights = obj.get("arguments", {}).get("owa_weights")
+            if owa_weights is None:
+                owa_weights = owa_gmd_weights(R.shape[0])
+            measures[obj_name] = owa_risk(weights, R, owa_weights)
         if obj_type == "risk_budget":
             rc_name = obj_name if obj_name in ["StdDev", "var"] else "StdDev"
             rc = risk_contribution(weights, sigma, name=rc_name)
@@ -142,9 +147,11 @@ def optimize_portfolio(R: pd.DataFrame, portfolio: Union[Portfolio, MultLayerPor
         measures = calculate_objective_measures(w_nco.values, moments, objectives, R=R.values)
         return {"weights": w_nco, "objective_measures": measures, "status": "optimal", "moments": moments, "portfolio": portfolio}
 
-    # New: Direct EVaR optimization via CVXPY
+    # New: Direct EVaR/OWA optimization via CVXPY
     if any(obj["name"] == "EVaR" for obj in objectives if obj.get("enabled", True)):
         result = solve_evar(R.values, constraints, objectives, **kwargs)
+    elif any(obj["name"] == "OWA" for obj in objectives if obj.get("enabled", True)):
+        result = solve_owa(R.values, constraints, objectives, **kwargs)
     elif optimize_method == "Kelly":
         from .solvers import solve_kelly
         result = solve_kelly(R.values, constraints, **kwargs)

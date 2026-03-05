@@ -293,3 +293,84 @@ def solve_mdiv(
         return {"status": prob.status, "weights": w_final, "obj_value": 1.0 / np.sqrt(prob.value)}
     
     return {"status": "failed", "weights": None}
+
+def solve_owa(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Minimize Ordered Weighted Averaging (OWA) risk.
+    """
+    T, n = R.shape
+    w = cp.Variable(n)
+    
+    # 1. Constraints
+    cp_constraints = []
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+
+    # 2. OWA Objective
+    # OWA = sum(owa_weights * sorted_losses)
+    # LP Formulation for non-increasing weights:
+    # OWA = sum_{k=1}^T (w_k - w_{k+1}) * (sum of top k losses)
+    
+    owa_obj_config = next((o for o in objectives if o["name"] == "OWA"), None)
+    if not owa_obj_config:
+        return {"status": "failed", "message": "OWA objective config not found"}
+    
+    owa_weights = owa_obj_config.get("arguments", {}).get("owa_weights")
+    if owa_weights is None:
+        # Default to GMD if not provided
+        from .risk import owa_gmd_weights
+        owa_weights = owa_gmd_weights(T)
+    
+    # Delta weights: delta_w[k] = w[k] - w[k+1]
+    # Correct LP formulation: OWA = sum( (w_k - w_{k+1}) * TopK_Sum )
+    # This is only valid if weights are non-increasing: w1 >= w2 >= ... >= wT >= 0
+    # If some weights are negative (like GMD), we shift them up or use the alternate formulation.
+    # However, for pure risk measures like CVaR, they are non-negative and non-increasing.
+    
+    # Ensure weights are non-increasing for convex optimization
+    if np.any(np.diff(owa_weights) > 1e-12):
+        # If not non-increasing, the problem is not convex for minimization
+        # We enforce it or raise an error? For now, let's just make them non-increasing.
+        owa_weights = np.sort(owa_weights)[::-1]
+    
+    delta_w = owa_weights[:-1] - owa_weights[1:]
+    
+    # Variables for top-k sums
+    # Sum of k largest losses = min k*zeta_k + sum(d_{t,k})
+    # This only works for k < T where we actually need the sorting trick.
+    # For k = T, sum of top T losses is just the sum of ALL losses (linear).
+    
+    if T > 1:
+        zeta = cp.Variable(T - 1)
+        d = cp.Variable((T, T - 1), nonneg=True)
+        
+        losses = -R @ w
+        for k in range(1, T):
+            cp_constraints.append(d[:, k-1] >= losses - zeta[k-1])
+        
+        # OWA = sum_{k=1}^{T-1} (w_k - w_{k+1}) * TopK_Sum + w_T * Total_Sum
+        top_k_sums = [ (k * zeta[k-1] + cp.sum(d[:, k-1])) for k in range(1, T) ]
+        owa_expr = cp.sum([delta_w[i] * top_k_sums[i] for i in range(T-1)]) + owa_weights[-1] * cp.sum(losses)
+    else:
+        owa_expr = owa_weights[0] * (-R @ w)
+    
+    prob = cp.Problem(cp.Minimize(owa_expr), cp_constraints)
+    
+    try:
+        prob.solve(verbose=False)
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+        
+    if prob.status not in ["optimal", "feasible"]:
+        return {"status": prob.status, "weights": None}
+        
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
