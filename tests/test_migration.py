@@ -27,7 +27,7 @@ def load_dataset(name):
         return df
 
 def test_multi_dataset_cross_validation():
-    with open("multi_cross_val.json", "r") as f:
+    with open("data/multi_cross_val.json", "r") as f:
         all_r_results = json.load(f)
         
     for ds_name in ["edhec", "stocks", "macro"]:
@@ -62,8 +62,3 @@ def test_multi_dataset_cross_validation():
         py_res_rob = optimize_portfolio(R, portfolio_rob)
         np.testing.assert_allclose(py_res_rob["weights"].values, r_results["robust_weights"], atol=1e-4)
 
-def test_exhaustive_multi_dataset_cross_validation():
-    pass
-
-def test_rp_transform_constraints():
-    pass

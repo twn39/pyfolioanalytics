@@ -10,7 +10,6 @@ wheels/
 .venv/
 
 # Project specifics
-third_party/
 .idea/
 
 # OS files
