@@ -4,13 +4,23 @@ import numpy as np
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 
+import json
+import os
+
 @pytest.fixture
 def stocks_data():
     df = pd.read_csv("data/stock_returns.csv", index_col=0, parse_dates=True).iloc[:100]
     return df
 
-def test_kelly_optimization_parity(stocks_data):
-    # Our implementation
+@pytest.fixture
+def riskfolio_cv():
+    path = "data/riskfolio_cv.json"
+    if not os.path.exists(path):
+        pytest.skip(f"{path} not found. Run scripts/generate_riskfolio_cv.py first.")
+    with open(path, "r") as f:
+        return json.load(f)
+
+def test_kelly_optimization_parity(stocks_data, riskfolio_cv):
     assets = stocks_data.columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
@@ -19,18 +29,12 @@ def test_kelly_optimization_parity(stocks_data):
     res = optimize_portfolio(stocks_data, portfolio, optimize_method="Kelly")
     w_ours = res["weights"].values
     
-    # Riskfolio-lib implementation
-    import riskfolio as rp
-    port = rp.Portfolio(returns=stocks_data)
-    port.assets_stats(method_mu='hist', method_cov='hist')
-    # Use same constraints (long-only, full investment)
-    w_rp = port.optimization(model='Classic', rm='MV', obj='Sharpe', kelly='exact', rf=0)
-    w_rf = w_rp["weights"].values
+    # Ground truth from JSON
+    w_expected = pd.Series(riskfolio_cv["kelly"]["weights"]).values
     
-    np.testing.assert_allclose(w_ours, w_rf, atol=1e-5)
+    np.testing.assert_allclose(w_ours, w_expected, atol=1e-5)
 
-def test_max_diversification_parity(stocks_data):
-    # Our implementation
+def test_max_diversification_parity(stocks_data, riskfolio_cv):
     assets = stocks_data.columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
@@ -39,36 +43,27 @@ def test_max_diversification_parity(stocks_data):
     res = optimize_portfolio(stocks_data, portfolio, optimize_method="MDIV")
     w_ours = res["weights"].values
     
-    # Riskfolio-lib implementation
-    # MDIV is Sharpe Ratio with mu = volatilities
-    import riskfolio as rp
-    port = rp.Portfolio(returns=stocks_data)
-    # Force mu to be volatilities
-    vols = stocks_data.std().to_frame().T
-    port.mu = vols
-    port.cov = stocks_data.cov()
+    # Ground truth from JSON
+    w_expected = pd.Series(riskfolio_cv["mdiv"]["weights"]).values
     
-    w_rp = port.optimization(model='Classic', rm='MV', obj='Sharpe', rf=0)
-    w_rf = w_rp["weights"].values
-    
-    np.testing.assert_allclose(w_ours, w_rf, atol=1e-5)
+    np.testing.assert_allclose(w_ours, w_expected, atol=1e-5)
 
-def test_kelly_optimization_internal(stocks_data):
-    # (Existing internal tests...)
+def test_mdiv_ratio_parity(stocks_data, riskfolio_cv):
     assets = stocks_data.columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
     portfolio.add_constraint(type="long_only")
-    res = optimize_portfolio(stocks_data, portfolio, optimize_method="Kelly")
-    assert res["weights"] is not None
-    assert np.allclose(res["weights"].sum(), 1.0)
-
-def test_max_diversification_internal(stocks_data):
-    # (Existing internal tests...)
-    assets = stocks_data.columns.tolist()
-    portfolio = Portfolio(assets=assets)
-    portfolio.add_constraint(type="full_investment")
-    portfolio.add_constraint(type="long_only")
+    
     res = optimize_portfolio(stocks_data, portfolio, optimize_method="MDIV")
-    assert res["weights"] is not None
-    assert np.allclose(res["weights"].sum(), 1.0)
+    
+    # Check if Diversification Ratio is calculated correctly
+    w = res["weights"].values
+    cov = stocks_data.cov().values
+    vols = np.sqrt(np.diag(cov))
+    
+    p_vol = np.sqrt(w @ cov @ w)
+    weighted_vol = w @ vols
+    div_ratio = weighted_vol / p_vol
+    
+    expected_ratio = riskfolio_cv["mdiv"]["div_ratio"]
+    assert np.isclose(div_ratio, expected_ratio, atol=1e-5)
