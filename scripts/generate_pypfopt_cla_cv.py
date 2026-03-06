@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import json
 from pypfopt.cla import CLA
@@ -46,7 +45,10 @@ output = {
     "min_volatility_weights": mv_w,
     "frontier_means": [float(x) for x in mu_f],
     "frontier_stds": [float(x) for x in sigma_f],
-    "frontier_weights": [list(w.values()) if isinstance(w, dict) else w.flatten().tolist() for w in weights_f]
+    "frontier_weights": [
+        list(w.values()) if isinstance(w, dict) else w.flatten().tolist()
+        for w in weights_f
+    ],
 }
 
 with open("data/pypfopt_cla_cv.json", "w") as f:

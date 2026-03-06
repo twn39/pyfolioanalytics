@@ -75,7 +75,7 @@ def test_meucci_entropy_pooling(stocks_data):
 
 def test_set_portfolio_moments_meucci(stocks_data):
     portfolio = Portfolio(assets=stocks_data.columns.tolist())
-    T = len(stocks_data)
+    len(stocks_data)
     R1 = stocks_data.iloc[:, 0].values
     Aeq = R1.reshape(1, -1)
     beq = np.array([0.001])  # Target mean

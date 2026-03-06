@@ -56,7 +56,7 @@ def test_position_limit_constraint(stocks_data):
 
 
 def test_multi_layer_portfolio(stocks_data):
-    assets = stocks_data.columns.tolist()
+    stocks_data.columns.tolist()
     # Layer 1: Tech Group
     p_tech = Portfolio(assets=["AAPL", "MSFT"])
     p_tech.add_constraint(type="full_investment")
