@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Union
 from .portfolio import Portfolio, MultLayerPortfolio
 from .moments import set_portfolio_moments
-from .solvers import solve_mvo, solve_nonlinear, solve_deoptim, solve_evar, solve_owa
+from .solvers import solve_mvo, solve_nonlinear, solve_deoptim, solve_evar, solve_owa, solve_noc
 from .risk import VaR, ES, risk_contribution, max_drawdown, CDaR, EVaR, owa_risk, owa_gmd_weights, owa_cvar_weights
 from .random_portfolios import random_portfolios
 from .ml import hrp_optimization, herc_optimization, nco_optimization
@@ -158,6 +158,8 @@ def optimize_portfolio(R: pd.DataFrame, portfolio: Union[Portfolio, MultLayerPor
     elif optimize_method == "MDIV":
         from .solvers import solve_mdiv
         result = solve_mdiv(moments, constraints, **kwargs)
+    elif optimize_method == "NOC":
+        result = solve_noc(R.values, moments, constraints, objectives, **kwargs)
     else:
         has_risk_budget = any(obj["type"] == "risk_budget" for obj in objectives if obj.get("enabled", True))
         if has_risk_budget or optimize_method == "DEoptim":

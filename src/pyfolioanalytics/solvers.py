@@ -374,3 +374,124 @@ def solve_owa(
         return {"status": prob.status, "weights": None}
         
     return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+def solve_noc(
+    R: np.ndarray,
+    moments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Near-Optimal Centering (NOC) solver.
+    Finds a central portfolio in the near-optimal region.
+    """
+    T, n = R.shape
+    mu = moments.get("mu", np.mean(R, axis=0)).flatten()
+    sigma = moments.get("sigma", np.cov(R, rowvar=False))
+    
+    bins = kwargs.get("bins")
+    if bins is None:
+        bins = T / n if T > n else 20.0
+    
+    # 1. Identify Anchor Points: w_min (Min Risk), w_opt (Target), w_max (Max Return)
+    # We'll use MVO as the base risk measure for now (Variance)
+    # TODO: Support OWA/EVaR as base risk for NOC if needed.
+    
+    asset_names = list(constraints["min"].index)
+    w = cp.Variable(n)
+    
+    base_constraints = [
+        cp.sum(w) >= constraints["min_sum"],
+        cp.sum(w) <= constraints["max_sum"],
+        w >= constraints["min"].values,
+        w <= constraints["max"].values
+    ]
+    
+    # a. w_min: Minimize Risk (Min Variance)
+    prob_min = cp.Problem(cp.Minimize(cp.quad_form(w, sigma)), base_constraints)
+    prob_min.solve(verbose=False)
+    if prob_min.status not in ["optimal", "feasible"]:
+        print(f"DEBUG: Min risk failed with status {prob_min.status}")
+        return {"status": "failed", "weights": None, "message": "Min risk anchor failed"}
+    w_min = w.value
+    rk_min = prob_min.value
+    rt_min = w_min @ mu
+    
+    # b. w_max: Maximize Return
+    prob_max = cp.Problem(cp.Maximize(w @ mu), base_constraints)
+    prob_max.solve(verbose=False)
+    if prob_max.status not in ["optimal", "feasible"]:
+        print(f"DEBUG: Max return failed with status {prob_max.status}")
+        return {"status": "failed", "weights": None, "message": "Max return anchor failed"}
+    w_max = w.value
+    rt_max = prob_max.value
+    rk_max = cp.quad_form(w_max, sigma).value
+    
+    # c. w_opt: Solve for current target (e.g. Max Sharpe or Min Risk with Constraints)
+    # For NOC, w_opt is usually the result of the standard optimization.
+    # Let's assume the user wants to center around the solution of the current objectives.
+    # We call solve_mvo or similar logic here.
+    res_opt = solve_mvo(moments, constraints, objectives)
+    if res_opt["status"] not in ["optimal", "feasible"]:
+        print(f"DEBUG: Target anchor failed with status {res_opt['status']}")
+        return {"status": "failed", "weights": None, "message": "Target anchor failed"}
+    w_opt = res_opt["weights"]
+    rk_opt = cp.quad_form(w_opt, sigma).value
+    rt_opt = w_opt @ mu
+    
+    # 2. Define Near-Optimal Region Limits
+    rk_delta = (rk_max - rk_min) / bins
+    rt_delta = (rt_max - rt_min) / bins
+    
+    rk_limit = rk_opt + rk_delta
+    rt_limit = rt_opt - rt_delta
+    
+    # 3. Centering Optimization (Analyitcal Center)
+    # Maximize sum(log(w_i - lb_i)) + sum(log(ub_i - w_i)) + log(rk_limit - rk) + log(rt - rt_limit)
+    # We use cp.log for these terms.
+    
+    lb = constraints["min"].values
+    ub = constraints["max"].values
+    
+    # Constraints for the centering step
+    centering_constraints = base_constraints + [
+        cp.quad_form(w, sigma) <= rk_limit,
+        w @ mu >= rt_limit
+    ]
+    
+    # Combined terms for log-barrier
+    # We only include log(w - lb) and log(ub - w) for non-equal bounds
+    log_terms = []
+    for i in range(n):
+        if ub[i] > lb[i] + 1e-12:
+            log_terms.append(cp.log(w[i] - lb[i]))
+            log_terms.append(cp.log(ub[i] - w[i]))
+
+    
+    # We only include log(w - lb) and log(ub - w) for non-equal bounds
+    # Vectorize log operation to bypass potential CVXPY scalar ExpCone bugs
+    log_args = [
+        cp.reshape(rk_limit - cp.quad_form(w, sigma), (1,), order='C'),
+        cp.reshape(w @ mu - rt_limit, (1,), order='C')
+    ]
+    for i in range(n):
+        if ub[i] > lb[i] + 1e-12:
+            log_args.append(cp.reshape(w[i] - lb[i], (1,), order='C'))
+            log_args.append(cp.reshape(ub[i] - w[i], (1,), order='C'))
+
+    vec_args = cp.vstack(log_args)
+    centering_obj = cp.Maximize(cp.sum(cp.log(vec_args)))
+    
+    prob_noc = cp.Problem(centering_obj, centering_constraints)
+    try:
+        prob_noc.solve(verbose=False)
+    except Exception as e:
+        print(f"DEBUG: Centering solve exception: {str(e)}")
+        return {"status": "failed", "weights": None, "message": str(e)}
+        
+    if prob_noc.status not in ["optimal", "optimal_inaccurate", "feasible"]:
+        print(f"DEBUG: Centering failed with status {prob_noc.status}")
+        return {"status": prob_noc.status, "weights": None}
+        
+    return {"status": prob_noc.status, "weights": w.value, "obj_value": prob_noc.value}
