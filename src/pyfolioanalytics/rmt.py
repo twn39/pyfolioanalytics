@@ -1,6 +1,7 @@
 import numpy as np
-from scipy.optimize import minimize
-from typing import Tuple, Any
+import pandas as pd
+from typing import Optional, Union, Tuple, Dict, Any
+from scipy.optimize import minimize_scalar
 
 def marchenko_pastur_pdf(x: np.ndarray, q: float, sigma2: float = 1.0) -> np.ndarray:
     """
@@ -19,6 +20,8 @@ def _fit_err(sigma2: float, eigenvalues: np.ndarray, q: float, n_bins: int = 100
     """
     SSE between empirical and theoretical MP PDF.
     """
+    if sigma2 <= 0:
+        return 1e10
     # Empirical PDF
     hist, bin_edges = np.histogram(eigenvalues, bins=n_bins, density=True)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -33,9 +36,8 @@ def find_max_eigenvalue(eigenvalues: np.ndarray, q: float) -> Tuple[float, float
     Find the maximum eigenvalue that belongs to the noise component.
     Returns (e_max, fitted_sigma2).
     """
-    # Initial guess for sigma2: usually 1.0 for correlation matrix
-    res = minimize(_fit_err, x0=[1.0], args=(eigenvalues, q), bounds=[(1e-5, 10.0)])
-    sigma2 = res.x[0]
+    res = minimize_scalar(_fit_err, bounds=(1e-5, 1.0), args=(eigenvalues, q), method='bounded')
+    sigma2 = res.x
     e_max = sigma2 * (1 + np.sqrt(1.0 / q))**2
     return e_max, sigma2
 
@@ -61,16 +63,19 @@ def denoise_covariance(
     vals = vals[idx]
     vecs = vecs[:, idx]
     
-    e_max, _ = find_max_eigenvalue(vals, q)
+    e_max, sigma2 = find_max_eigenvalue(vals, q)
     
     # Identify noise components
     n_noise = np.sum(vals <= e_max)
     if n_noise == 0:
-        return sigma
+        # Fallback
+        e_max = (1 + np.sqrt(1.0 / q))**2
+        n_noise = np.sum(vals <= e_max)
+        if n_noise == 0:
+            return sigma
         
     vals_denoised = np.copy(vals)
     if method == "spectral":
-        # Using a small epsilon to maintain positive definiteness and avoid numerical issues
         vals_denoised[-n_noise:] = 1e-10
     elif method == "fixed":
         avg_noise = np.mean(vals[-n_noise:])
@@ -90,3 +95,109 @@ def denoise_covariance(
         return corr_denoised * np.outer(std, std)
     else:
         return corr_denoised
+
+def gerber_statistic(
+    R: pd.DataFrame, 
+    threshold: float = 0.5, 
+    method: int = 1, 
+    standardize: bool = False
+) -> pd.DataFrame:
+    """
+    Compute the Gerber Statistic (robust co-movement measure).
+    """
+    T, N = R.shape
+    X = R.values
+    
+    if standardize:
+        mu = np.mean(X, axis=0)
+        std = np.std(X, axis=0, ddof=1)
+        X = (X - mu) / std
+        U = (X >= threshold)
+        D = (X <= -threshold)
+    else:
+        std = np.std(X, axis=0, ddof=1)
+        U = (X >= threshold * std)
+        D = (X <= -threshold * std)
+        
+    UmD = U.astype(float) - D.astype(float)
+    
+    if method == 0:
+        UpD = U.astype(float) + D.astype(float)
+        H = UmD.T @ UmD
+        denom = UpD.T @ UpD
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+    elif method == 1:
+        N_mat = (~U & ~D).astype(float)
+        H = UmD.T @ UmD
+        denom = T - (N_mat.T @ N_mat)
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+    elif method == 2:
+        H = UmD.T @ UmD
+        h = np.sqrt(np.diag(H))
+        denom = np.outer(h, h)
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+    else:
+        raise ValueError("Method must be 0, 1, or 2")
+        
+    std_orig = np.std(R.values, axis=0, ddof=1)
+    sigma = rho * np.outer(std_orig, std_orig)
+    return pd.DataFrame(sigma, index=R.columns, columns=R.columns)
+
+def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
+    """
+    Remove the market component (first principal components) from covariance.
+    """
+    vals, vecs = np.linalg.eigh(sigma)
+    idx = np.argsort(vals)[::-1]
+    vals = vals[idx]
+    vecs = vecs[:, idx]
+    
+    vals_detoned = np.copy(vals)
+    vals_detoned[:n_components] = 0.0
+    
+    sigma_detoned = vecs @ np.diag(vals_detoned) @ vecs.T
+    return sigma_detoned
+
+def bootstrap_uncertainty_set(
+    R: pd.DataFrame, 
+    n_sim: int = 1000, 
+    q: float = 0.05
+) -> Dict[str, Any]:
+    """
+    Construct uncertainty sets for mu and sigma using bootstrap.
+    """
+    T, N = R.shape
+    mu_sims = []
+    sigma_sims = []
+    
+    for _ in range(n_sim):
+        idx = np.random.choice(T, size=T, replace=True)
+        R_boot = R.iloc[idx]
+        mu_sims.append(R_boot.mean().values)
+        sigma_sims.append(R_boot.cov().values)
+        
+    mu_sims = np.array(mu_sims)
+    sigma_sims = np.array(sigma_sims)
+    
+    # 1. Box uncertainty for mu
+    mu_lb = np.quantile(mu_sims, q/2, axis=0)
+    mu_ub = np.quantile(mu_sims, 1-q/2, axis=0)
+    
+    # 2. Ellipsoidal uncertainty for mu
+    mu_mean = np.mean(mu_sims, axis=0)
+    mu_cov = np.cov(mu_sims, rowvar=False)
+    
+    # 3. Ellipsoidal uncertainty for sigma
+    # Reshape sigma_sims to (n_sim, N^2)
+    sigma_vecs = sigma_sims.reshape(n_sim, -1)
+    sigma_mean = np.mean(sigma_sims, axis=0)
+    sigma_cov = np.cov(sigma_vecs, rowvar=False)
+    
+    return {
+        "mu_lb": mu_lb,
+        "mu_ub": mu_ub,
+        "mu_mean": mu_mean,
+        "mu_cov": mu_cov,
+        "sigma_mean": sigma_mean,
+        "sigma_cov": sigma_cov
+    }
