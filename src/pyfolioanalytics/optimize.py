@@ -184,6 +184,12 @@ def optimize_portfolio(
 
     moments = set_portfolio_moments(R, portfolio)
     constraints = portfolio.get_constraints()
+    # Merge robust optimization kwargs into constraints for the solver
+    robust_keys = ["delta_mu", "robust_mu_type", "sigma_mu", "k_mu", "robust_sigma_type", "sigma_sigma", "k_sigma"]
+    for k in robust_keys:
+        if k in kwargs:
+            constraints[k] = kwargs[k]
+            
     objectives = portfolio.objectives
 
     if optimize_method == "random":

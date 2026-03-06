@@ -17,17 +17,30 @@ def solve_mvo(
     asset_names = list(constraints["min"].index)
 
     # 1. Handle Robustness (Worst-case Mu)
-
     delta_mu = constraints.get("delta_mu")
+    mu_robust = mu
+    robust_mu_type = constraints.get("robust_mu_type", "box")
+
     if delta_mu is not None:
-        if np.all(constraints["min"].values >= 0):
-            mu_robust = mu - delta_mu.values
-        else:
-            mu_robust = mu
-    else:
-        mu_robust = mu
+        if robust_mu_type == "box":
+            if np.all(constraints["min"].values >= 0):
+                mu_robust = mu - delta_mu.values
+            else:
+                mu_robust = mu
+        elif robust_mu_type == "ellipsoidal":
+            # Return objective will be w @ mu - k * ||G @ w||_2
+            # where G is Cholesky factor of sigma_mu (uncertainty of mu)
+            k_mu = constraints.get("k_mu", 1.0)
+            sigma_mu = constraints.get("sigma_mu")
+            if sigma_mu is not None:
+                G_mu = np.linalg.cholesky(sigma_mu).T
+                mu_robust = mu # Base mu
+                # We will add penalty term later in objective
+            else:
+                robust_mu_type = "box" # Fallback
 
     # 2. Base constraints
+
     cp_constraints = []
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
         cp_constraints.append(cp.sum(w) == constraints["min_sum"])
@@ -88,34 +101,85 @@ def solve_mvo(
         None,
     )
 
+    # Uncertainty terms
+    ret_uncertainty = 0
+    if robust_mu_type == "ellipsoidal" and delta_mu is not None:
+        sigma_mu = constraints.get("sigma_mu")
+        if sigma_mu is not None:
+            k_mu = constraints.get("k_mu", 1.0)
+            G_mu = np.linalg.cholesky(sigma_mu).T
+            ret_uncertainty = k_mu * cp.norm(G_mu @ w)
+
+    robust_sigma_type = constraints.get("robust_sigma_type", "none")
+    risk_uncertainty = 0
+    if robust_sigma_type == "ellipsoidal":
+        # Robust Risk: Tr(Sigma * (W + E)) + k_sigma * sigma_risk
+        # where [W w; w' k] >> 0 and E >= 0
+        sigma_sigma = constraints.get("sigma_sigma")
+        if sigma_sigma is not None:
+            k_sigma = constraints.get("k_sigma", 1.0)
+            G_sigma = np.linalg.cholesky(sigma_sigma).T
+            
+            W = cp.Variable((n, n), symmetric=True)
+            E = cp.Variable((n, n), symmetric=True)
+            sigma_risk = cp.Variable()
+            
+            # Conic constraints for robustness
+            # PortfolioAnalytics/Optimisers.jl approach:
+            # || G_sigma * vec(W + E) ||_2 <= sigma_risk
+            cp_constraints.append(cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk)
+            cp_constraints.append(E >> 0)
+            
+            # [W w; w' 1] >> 0 (using 1 since we assume k=1 for non-ratio)
+            # This is equivalent to W >> w @ w'
+            L = cp.vstack([cp.hstack([W, cp.reshape(w, (n, 1), order="C")]),
+                           cp.hstack([cp.reshape(w, (1, n), order="C"), np.array([[1.0]])])])
+            cp_constraints.append(L >> 0)
+            
+            risk_uncertainty = cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
+            # Override standard risk term if robust
+            risk_term = risk_uncertainty
+        else:
+            risk_term = cp.quad_form(w, sigma)
+    else:
+        risk_term = cp.quad_form(w, sigma)
+
     if min_return is not None:
         prob = cp.Problem(
-            cp.Minimize(cp.quad_form(w, sigma) + tc_penalty), cp_constraints
+            cp.Minimize(risk_term + tc_penalty), cp_constraints
         )
     elif return_obj and risk_obj:
         risk_aversion = risk_obj.get("risk_aversion", 1.0)
+        # Utility: 0.5 * lambda * risk_term - (mu'w - penalty)
         prob = cp.Problem(
             cp.Minimize(
-                0.5 * risk_aversion * cp.quad_form(w, sigma)
-                - w @ mu_robust
+                0.5 * risk_aversion * risk_term
+                - (w @ mu_robust - ret_uncertainty)
                 + tc_penalty
             ),
             cp_constraints,
         )
     elif risk_obj:
         prob = cp.Problem(
-            cp.Minimize(cp.quad_form(w, sigma) + tc_penalty), cp_constraints
+            cp.Minimize(risk_term + tc_penalty), cp_constraints
         )
     elif return_obj:
         mult = return_obj.get("multiplier", -1.0)
         if mult < 0:
-            prob = cp.Problem(cp.Maximize(w @ mu_robust - tc_penalty), cp_constraints)
+            prob = cp.Problem(
+                cp.Minimize(-(w @ mu_robust - ret_uncertainty) + tc_penalty),
+                cp_constraints,
+            )
         else:
-            prob = cp.Problem(cp.Minimize(w @ mu_robust + tc_penalty), cp_constraints)
+            prob = cp.Problem(
+                cp.Minimize((w @ mu_robust - ret_uncertainty) + tc_penalty),
+                cp_constraints,
+            )
     else:
         prob = cp.Problem(
             cp.Minimize(cp.quad_form(w, sigma) + tc_penalty), cp_constraints
         )
+
 
     try:
         if max_pos is not None:
