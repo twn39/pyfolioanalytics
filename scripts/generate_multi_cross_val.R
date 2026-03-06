@@ -24,19 +24,12 @@ calc_evar <- function(R, weights, p = 0.95) {
 
 # Preprocessing functions matching Python load_dataset
 load_edhec <- function() {
-  df <- read.table("data/edhec.csv", sep=";", header=TRUE, check.names=FALSE)
-  dates <- as.Date(df[,1], format="%d/%m/%Y")
+  df <- read.csv("data/edhec.csv", header=TRUE, check.names=FALSE)
+  dates <- as.Date(df[,1])
   df_data <- df[,-1]
   
   # Match column naming: space to dot
   colnames(df_data) <- gsub(" ", ".", colnames(df_data))
-  
-  # Handle percentage strings
-  for(i in 1:ncol(df_data)) {
-    if(is.character(df_data[,i])) {
-      df_data[,i] <- as.numeric(gsub("%", "", df_data[,i])) / 100
-    }
-  }
   
   # Select first 5 assets as in Python test
   res <- xts(df_data[, 1:5], order.by=dates)

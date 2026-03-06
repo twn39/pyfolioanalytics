@@ -11,14 +11,10 @@ def stocks_data():
 
 @pytest.fixture
 def edhec_data():
-    df = pd.read_table("data/edhec.csv", sep=";", header=0)
-    dates = pd.to_datetime(df.iloc[:, 0], dayfirst=True)
-    df = df.iloc[:, 1:6].copy() # First 5 assets
-    df.index = dates
+    df = pd.read_csv("data/edhec.csv", index_col=0)
+    df.index = pd.to_datetime(df.index, dayfirst=True)
+    df = df.iloc[:, :5].copy() # First 5 assets
     df.columns = [c.replace(" ", ".") for c in df.columns]
-    for col in df.columns:
-        if pd.api.types.is_string_dtype(df[col]):
-            df[col] = df[col].str.replace("%", "").astype(float) / 100
     return df
 
 def test_hrp_real_data(stocks_data):

@@ -4,12 +4,9 @@ import riskfolio as rp
 import json
 import os
 
-# Load data - EDHEC uses ';' and '%' strings
+# Load data
 data_path = "data/edhec.csv"
-df = pd.read_csv(data_path, sep=';', index_col=0)
-# Convert all asset columns to float. Percentage strings are handled.
-for col in df.columns:
-    df[col] = df[col].astype(str).str.replace('%', '').astype(float) / 100.0
+df = pd.read_csv(data_path, index_col=0)
 
 # Use same assets as before (first 10)
 Y = df.iloc[:, :10].astype(float)

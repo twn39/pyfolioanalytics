@@ -10,9 +10,7 @@ from pyfolioanalytics.risk import owa_risk, owa_gmd_weights, owa_cvar_weights
 def test_owa_weights_and_risk_parity():
     # Load EDHEC data
     data_path = os.path.join(os.path.dirname(__file__), "../data/edhec.csv")
-    df = pd.read_csv(data_path, sep=';', index_col=0)
-    # Remove % and convert to float
-    df = df.apply(lambda x: x.str.replace('%', '').astype(float) / 100.0)
+    df = pd.read_csv(data_path, index_col=0)
     # Use same assets as julia script (2:11 -> first 10 columns)
     R = df.iloc[:, :10]
     T, N = R.shape
@@ -50,8 +48,7 @@ def test_owa_weights_and_risk_parity():
 
 def test_owa_optimization_basic():
     data_path = os.path.join(os.path.dirname(__file__), "../data/edhec.csv")
-    df = pd.read_csv(data_path, sep=';', index_col=0)
-    df = df.apply(lambda x: x.str.replace('%', '').astype(float) / 100.0)
+    df = pd.read_csv(data_path, index_col=0)
     R = df.iloc[:, :10]
     
     port = Portfolio(assets=list(R.columns))

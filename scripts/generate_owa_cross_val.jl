@@ -5,9 +5,9 @@ function owa_gmd(T::Integer)
     return (4 * (1:T) .- 2 * (T + 1)) / (T * (T - 1))
 end
 
-# Load data - EDHEC uses ';' and '%' strings
-csv_data = readdlm("data/edhec.csv", ';', skipstart=1)
-R = convert(Matrix{Float64}, [parse(Float64, endswith(string(val), "%") ? string(val)[1:end-1] : string(val)) / (endswith(string(val), "%") ? 100.0 : 1.0) for val in csv_data[:, 2:11]])
+# Load data - EDHEC is now standard CSV
+csv_data = readdlm("data/edhec.csv", ',', skipstart=1)
+R = convert(Matrix{Float64}, csv_data[:, 2:11])
 T, N = size(R)
 
 # GMD Weights (increasing as per PO.jl)

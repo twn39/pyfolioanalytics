@@ -4,16 +4,7 @@ import json
 from pypfopt.cla import CLA
 
 # 1. 加载并清洗数据
-df = pd.read_csv("data/edhec.csv", sep=";", index_col=0)
-
-# 转换百分比字符串为浮点数
-def parse_pct(x):
-    if isinstance(x, str):
-        return float(x.replace("%", "")) / 100
-    return x
-
-df = df.map(parse_pct)
-df = df.apply(pd.to_numeric, errors='coerce')
+df = pd.read_csv("data/edhec.csv", index_col=0)
 
 # 2. 选取子集并确保没有 NaN
 # 使用前 100 行，前 10 个资产

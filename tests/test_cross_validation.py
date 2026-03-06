@@ -10,14 +10,9 @@ from pyfolioanalytics.risk import EVaR
 def load_dataset(name):
     base_dir = os.path.join(os.path.dirname(__file__), "../data")
     if name == "edhec":
-        df = pd.read_table(os.path.join(base_dir, "edhec.csv"), sep=";", header=0)
-        dates = pd.to_datetime(df.iloc[:, 0], dayfirst=True)
-        df = df.iloc[:, 1:].copy()
-        df.index = dates
+        df = pd.read_csv(os.path.join(base_dir, "edhec.csv"), index_col=0)
+        df.index = pd.to_datetime(df.index, dayfirst=True)
         df.columns = [c.replace(" ", ".") for c in df.columns]
-        for col in df.columns:
-            if pd.api.types.is_string_dtype(df[col]):
-                df[col] = df[col].str.replace("%", "").astype(float) / 100
         return df.iloc[:, :5]
     elif name == "stocks":
         df = pd.read_csv(os.path.join(base_dir, "stock_returns.csv"), index_col=0, parse_dates=True)

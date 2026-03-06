@@ -1,10 +1,10 @@
 library(PortfolioAnalytics)
 library(jsonlite)
 
-# Load data
-data(edhec)
+# Load data from CSV
+edhec_full <- read.csv("data/edhec.csv", row.names=1, check.names=FALSE)
 # Use first 5 assets and first 24 months
-edhec_subset <- edhec[1:24, 1:5]
+edhec_subset <- as.matrix(edhec_full[1:24, 1:5])
 asset_names <- colnames(edhec_subset)
 
 # Define portfolio

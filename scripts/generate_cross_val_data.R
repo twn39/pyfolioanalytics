@@ -4,12 +4,9 @@ library(xts)
 
 # Helper to load EDHEC
 load_edhec <- function() {
-  df <- read.table("data/edhec.csv", sep=";", header=TRUE, check.names=FALSE)
-  dates <- as.Date(df[,1], format="%d/%m/%Y")
+  df <- read.csv("data/edhec.csv", header=TRUE, check.names=FALSE)
+  dates <- as.Date(df[,1])
   df <- df[, -1]
-  for(i in 1:ncol(df)) {
-    df[,i] <- as.numeric(gsub("%", "", df[,i])) / 100
-  }
   colnames(df) <- gsub(" ", ".", colnames(df))
   res <- xts(df[, 1:5], order.by=dates)
   return(res)

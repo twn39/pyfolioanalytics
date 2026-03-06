@@ -8,9 +8,7 @@ from pyfolioanalytics.optimize import optimize_portfolio
 def test_noc_on_real_data():
     # Load EDHEC data
     data_path = os.path.join(os.path.dirname(__file__), "../data/edhec.csv")
-    df = pd.read_csv(data_path, sep=';', index_col=0)
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.replace('%', '').astype(float) / 100.0
+    df = pd.read_csv(data_path, index_col=0)
     R = df.iloc[:, :10]
     
     # Create Portfolio
@@ -61,5 +59,3 @@ def test_noc_on_real_data():
     # NOC risk should be slightly higher than MVO min risk (since it's in the near-optimal region)
     assert rk_noc >= rk_mvo - 1e-9
     
-if __name__ == "__main__":
-    pytest.main([__file__])

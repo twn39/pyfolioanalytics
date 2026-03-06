@@ -10,9 +10,7 @@ from pyfolioanalytics.risk import owa_gmd_weights
 def test_owa_gmd_riskfolio_parity():
     # Load EDHEC data
     data_path = os.path.join(os.path.dirname(__file__), "../data/edhec.csv")
-    df = pd.read_csv(data_path, sep=';', index_col=0)
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.replace('%', '').astype(float) / 100.0
+    df = pd.read_csv(data_path, index_col=0)
     R = df.iloc[:, :10]
     
     # Load Riskfolio ground truth
