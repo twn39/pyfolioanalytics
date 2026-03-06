@@ -492,6 +492,51 @@ def solve_noc(
         
     if prob_noc.status not in ["optimal", "optimal_inaccurate", "feasible"]:
         print(f"DEBUG: Centering failed with status {prob_noc.status}")
-        return {"status": prob_noc.status, "weights": None}
+        return { "status": prob_noc.status, "weights": None }
         
-    return {"status": prob_noc.status, "weights": w.value, "obj_value": prob_noc.value}
+    return { "status": prob_noc.status, "weights": w.value, "obj_value": prob_noc.value }
+
+def solve_cla(
+    moments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Solver wrapper for Critical Line Algorithm (CLA).
+    """
+    from .cla import CLA
+    
+    mu = moments["mu"].flatten()
+    sigma = moments["sigma"]
+    lb = constraints["min"].values
+    ub = constraints["max"].values
+    
+    # CLA only supports box constraints and sum(w) = 1 (usually)
+    # Our CLA implementation assumes sum(w) = 1.
+    
+    cla = CLA(mu, sigma, lb, ub)
+    cla.solve()
+    
+    # Determine which objective to return
+    # If there's a risk objective with risk_aversion=0 or a return objective, we might want max_sharpe
+    # If there's only a risk objective, min_volatility
+    
+    return_obj = next((o for o in objectives if o["type"] in ["return", "return_objective"]), None)
+    risk_obj = next((o for o in objectives if o["type"] in ["risk", "portfolio_risk_objective"]), None)
+    
+    if return_obj and risk_obj:
+        # For Max Sharpe, we assume risk_free_rate = 0 for now or get it from arguments
+        rf = risk_obj.get("arguments", {}).get("risk_free_rate", 0.0)
+        weights = cla.max_sharpe(risk_free_rate=rf)
+    elif return_obj:
+        # CLA naturally finds the max return point as the first turning point
+        weights = cla.w[0].flatten()
+    else:
+        weights = cla.min_volatility()
+        
+    return {
+        "status": "optimal",
+        "weights": weights,
+        "cla_object": cla # useful for extracting frontier later
+    }
