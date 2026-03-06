@@ -165,6 +165,15 @@ class Portfolio:
         res["max"] = res["max"].replace(np.inf, 1.0)
         return res
 
+    def clear_objectives(self):
+        self.objectives = []
+        return self
+
+    def copy(self):
+        import copy
+
+        return copy.deepcopy(self)
+
     def __repr__(self):
         return f"Portfolio(name={self.name}, assets={list(self.assets.keys())})"
 
@@ -181,6 +190,15 @@ class RegimePortfolio:
             return next(iter(self.portfolios.values()))
         return self.portfolios[regime]
 
+    def clear_objectives(self):
+        self.objectives = []
+        return self
+
+    def copy(self):
+        import copy
+
+        return copy.deepcopy(self)
+
     def __repr__(self):
         return f"RegimePortfolio(regimes={self.regime_labels})"
 
@@ -196,6 +214,15 @@ class MultLayerPortfolio:
                 f"'{meta_asset_name}' must be defined as an asset in the root portfolio."
             )
         self.sub_portfolios[meta_asset_name] = sub_portfolio
+
+    def clear_objectives(self):
+        self.objectives = []
+        return self
+
+    def copy(self):
+        import copy
+
+        return copy.deepcopy(self)
 
     def __repr__(self):
         return f"MultLayerPortfolio(root={self.root.name}, sub={list(self.sub_portfolios.keys())})"
