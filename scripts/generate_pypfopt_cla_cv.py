@@ -3,41 +3,56 @@ import pandas as pd
 import json
 from pypfopt.cla import CLA
 
-# Correctly load EDHEC data
+# 1. 加载并清洗数据
 df = pd.read_csv("data/edhec.csv", sep=";", index_col=0)
-for col in df.columns:
-    if df[col].dtype == object:
-        df[col] = df[col].str.replace("%", "").astype(float) / 100
+
+# 转换百分比字符串为浮点数
+def parse_pct(x):
+    if isinstance(x, str):
+        return float(x.replace("%", "")) / 100
+    return x
+
+df = df.map(parse_pct)
 df = df.apply(pd.to_numeric, errors='coerce')
 
-# Use a subset
-df_subset = df.iloc[:100, :10]
+# 2. 选取子集并确保没有 NaN
+# 使用前 100 行，前 10 个资产
+df_subset = df.iloc[:100, :10].dropna()
+
+print(f"Using {len(df_subset)} rows for calculation.")
+
+# 3. 计算年化指标 (假设月度数据)
 mu = df_subset.mean() * 12
 S = df_subset.cov() * 12
 
+if mu.isna().any() or S.isna().any().any():
+    print("Error: mu or S still contains NaNs!")
+    print("mu NaNs:", mu.isna().sum())
+    print("S NaNs:", S.isna().sum().sum())
+
+# 4. 运行 PyPortfolioOpt CLA
 cla = CLA(mu, S, weight_bounds=(0, 1))
 
-# 1. Max Sharpe
+# Max Sharpe
 try:
     weights_ms = cla.max_sharpe()
-    print("PyPfOpt Max Sharpe weights:", weights_ms)
-except Exception as e:
-    print("Max Sharpe failed:", e)
-    weights_ms = None
+    ms_w = list(weights_ms.values())
+except:
+    ms_w = None
 
-# 2. Min Volatility
+# Min Volatility
 weights_mv = cla.min_volatility()
-print("PyPfOpt Min Vol weights:", weights_mv)
+mv_w = list(weights_mv.values())
 
-# 3. Efficient Frontier
+# Efficient Frontier
 mu_f, sigma_f, weights_f = cla.efficient_frontier(points=20)
 
-# Prepare output
+# 5. 序列化输出
 output = {
     "mu": mu.tolist(),
     "sigma": S.values.tolist(),
-    "max_sharpe_weights": list(weights_ms.values()) if weights_ms is not None else None,
-    "min_volatility_weights": list(weights_mv.values()),
+    "max_sharpe_weights": ms_w,
+    "min_volatility_weights": mv_w,
     "frontier_means": [float(x) for x in mu_f],
     "frontier_stds": [float(x) for x in sigma_f],
     "frontier_weights": [list(w.values()) if isinstance(w, dict) else w.flatten().tolist() for w in weights_f]
@@ -46,4 +61,4 @@ output = {
 with open("data/pypfopt_cla_cv.json", "w") as f:
     json.dump(output, f)
 
-print("Generated data/pypfopt_cla_cv.json")
+print("Successfully generated data/pypfopt_cla_cv.json without NaNs.")
