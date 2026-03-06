@@ -45,8 +45,9 @@ def set_portfolio_moments(
         w_mkt = kwargs.get(
             "w_mkt", np.full((len(asset_names), 1), 1.0 / len(asset_names))
         )
-        P = kwargs.get("P")
-        q = kwargs.get("q")
+        from typing import cast
+        P = cast(np.ndarray, kwargs.get("P"))
+        q = cast(np.ndarray, kwargs.get("q"))
         tau = kwargs.get("tau", 0.05)
         risk_aversion = kwargs.get("risk_aversion", 2.5)
         res_bl = black_litterman(sigma, w_mkt, P, q, tau, risk_aversion)

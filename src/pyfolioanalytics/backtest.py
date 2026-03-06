@@ -1,6 +1,5 @@
 import pandas as pd
-import numpy as np
-from typing import Dict, Any, List, Union, Optional
+from typing import Dict, Any, List, Union
 from .portfolio import Portfolio, RegimePortfolio
 from .optimize import optimize_portfolio
 

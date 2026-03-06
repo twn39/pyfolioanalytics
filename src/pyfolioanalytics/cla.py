@@ -1,5 +1,6 @@
 import numpy as np
-from typing import List, Tuple, Any
+from typing import List, Tuple, Dict, Any, Optional
+
 
 
 class CLA:
@@ -73,7 +74,7 @@ class CLA:
         wB: np.ndarray,
         i: int,
         bi: Any,
-    ) -> Tuple[float, float]:
+    ) -> Tuple[Optional[float], Optional[float]]:
         onesF = np.ones((len(meanF), 1))
         c1 = onesF.T @ covarF_inv @ onesF
         c2 = covarF_inv @ meanF

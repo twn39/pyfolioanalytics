@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional, List, Union
-from .portfolio import Portfolio, MultLayerPortfolio
+from .portfolio import Portfolio, MultLayerPortfolio, RegimePortfolio
 from .moments import set_portfolio_moments
 from .solvers import (
     solve_mvo,
@@ -100,7 +100,7 @@ def equal_weight(R: pd.DataFrame, portfolio: Portfolio, **kwargs) -> Dict[str, A
 def inverse_volatility_weight(
     R: pd.DataFrame, portfolio: Portfolio, **kwargs
 ) -> Dict[str, Any]:
-    nassets = len(portfolio.assets)
+    len(portfolio.assets)
     constraints = portfolio.get_constraints()
     max_sum = constraints["max_sum"]
     asset_names = list(portfolio.assets.keys())
@@ -121,10 +121,21 @@ def inverse_volatility_weight(
 
 def optimize_portfolio(
     R: pd.DataFrame,
-    portfolio: Union[Portfolio, MultLayerPortfolio],
+    portfolio: Union[Portfolio, MultLayerPortfolio, RegimePortfolio],
     optimize_method: str = "ROI",
     **kwargs,
 ) -> Dict[str, Any]:
+    if isinstance(portfolio, RegimePortfolio):
+        # For simple optimization, we can't 'optimize' a RegimePortfolio without a regime signal.
+        # If 'regime' is provided in kwargs, use it.
+        regime = kwargs.get("regime")
+        if regime is not None:
+            return optimize_portfolio(
+                R, portfolio.get_portfolio(regime), optimize_method=optimize_method, **kwargs
+            )
+        else:
+            raise ValueError("RegimePortfolio requires a 'regime' argument to optimize.")
+
     if isinstance(portfolio, MultLayerPortfolio):
         sub_weights = {}
         sub_returns = {}

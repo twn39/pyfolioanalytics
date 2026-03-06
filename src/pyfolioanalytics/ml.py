@@ -72,7 +72,7 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     weights = get_recursive_bisection(cov, sort_indices, method="HRP")
     final_w = pd.Series(0.0, index=asset_names)
     for i, w_val in weights.items():
-        final_w[asset_names[i]] = w_val
+        final_w.iloc[i] = w_val
     return final_w
 
 
@@ -89,7 +89,7 @@ def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     weights = get_recursive_bisection(cov, sort_indices, method="HERC")
     final_w = pd.Series(0.0, index=asset_names)
     for i, w_val in weights.items():
-        final_w[asset_names[i]] = w_val
+        final_w.iloc[i] = w_val
     return final_w
 
 

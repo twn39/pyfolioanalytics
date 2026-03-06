@@ -15,7 +15,7 @@ def solve_mvo(
     mu = moments["mu"].flatten()
     sigma = moments["sigma"]
     asset_names = list(constraints["min"].index)
-    
+
     # 1. Handle Robustness (Worst-case Mu)
 
     delta_mu = constraints.get("delta_mu")
@@ -341,7 +341,12 @@ def solve_mdiv(
     except Exception:
         return {"status": "failed", "weights": None}
 
-    if prob.status in ["optimal", "feasible"] and k.value > 1e-9:
+    if (
+        prob.status in ["optimal", "feasible"]
+        and k.value is not None
+        and k.value > 1e-9
+        and w_hat.value is not None
+    ):
         w_final = w_hat.value / k.value
         return {
             "status": prob.status,

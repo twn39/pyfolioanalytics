@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 import numpy as np
 import pandas as pd
 
@@ -105,10 +105,10 @@ class Portfolio:
     def add_objective(
         self,
         type: str,
-        name: str = None,
+        name: Optional[str] = None,
         enabled: bool = True,
-        arguments: Dict[str, Any] = None,
-        multiplier: float = None,
+        arguments: Optional[Dict[str, Any]] = None,
+        multiplier: Optional[float] = None,
         **kwargs,
     ):
         if name is None:
@@ -132,7 +132,7 @@ class Portfolio:
 
     def get_constraints(self) -> Dict[str, Any]:
         asset_names = list(self.assets.keys())
-        nassets = len(asset_names)
+        len(asset_names)
         res = {
             "min_sum": -np.inf,
             "max_sum": np.inf,

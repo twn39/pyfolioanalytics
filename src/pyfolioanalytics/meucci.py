@@ -15,7 +15,7 @@ def entropy_pooling(
     Finds posterior probabilities p that minimize KL divergence from prior q,
     subject to linear constraints on p.
     """
-    T = len(prior_probs)
+    len(prior_probs)
     q = prior_probs.reshape(-1, 1)
 
     # We solve the dual problem for efficiency
@@ -35,7 +35,10 @@ def entropy_pooling(
         # We handle the '-1' constant by normalization later
         ln_q = np.log(q.flatten())
         val = np.exp(ln_q - (Aeq.T @ x))
-        return np.sum(val) + (beq.flatten() @ x)
+        res_val = np.sum(val)
+        if beq is not None:
+            res_val += beq.flatten() @ x
+        return res_val
 
     res = minimize(
         dual_objective,
