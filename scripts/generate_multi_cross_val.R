@@ -25,14 +25,14 @@ calc_evar <- function(R, weights, p = 0.95) {
 # Preprocessing functions matching Python load_dataset
 load_edhec <- function() {
   df <- read.csv("data/edhec.csv", header=TRUE, check.names=FALSE)
-  dates <- as.Date(df[,1])
+  dates <- as.Date(df[,1], format="%d/%m/%Y")
   df_data <- df[,-1]
   
   # Match column naming: space to dot
   colnames(df_data) <- gsub(" ", ".", colnames(df_data))
   
   # Select first 5 assets as in Python test
-  res <- xts(df_data[, 1:5], order.by=dates)
+  res <- xts(df_data[1:24, 1:5], order.by=dates[1:24])
   return(res)
 }
 

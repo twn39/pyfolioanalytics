@@ -3,6 +3,8 @@ library(jsonlite)
 
 # Load data from CSV
 edhec_full <- read.csv("data/edhec.csv", row.names=1, check.names=FALSE)
+# In standard read.csv with row.names=1, the first column becomes the row names.
+# The index will be strings "31/01/1997" etc.
 # Use first 5 assets and first 24 months
 edhec_subset <- as.matrix(edhec_full[1:24, 1:5])
 asset_names <- colnames(edhec_subset)
