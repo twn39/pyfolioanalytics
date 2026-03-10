@@ -137,6 +137,16 @@ class Portfolio:
             if leverage is None:
                 raise ValueError("leverage_exposure constraint requires 'leverage' parameter.")
             constraint.update({"leverage": float(leverage)})
+        elif type in ["diversification", "HHI"]:
+            div_target = kwargs.get("div_target")
+            if div_target is None:
+                # If HHI is passed, convert to div_target
+                hhi_target = kwargs.get("hhi_target")
+                if hhi_target is not None:
+                    div_target = 1.0 - hhi_target
+                else:
+                    raise ValueError("diversification constraint requires 'div_target' or 'hhi_target'.")
+            constraint.update({"div_target": float(div_target)})
         elif type == "robust":
             delta_mu = kwargs.get("delta_mu", 0.0)
             if isinstance(delta_mu, (int, float)):

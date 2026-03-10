@@ -67,6 +67,13 @@ def solve_mvo(
     if leverage_limit is not None:
         cp_constraints.append(cp.norm(w, 1) <= leverage_limit)
 
+    # Diversification (HHI) Constraint
+    div_target = constraints.get("div_target")
+    if div_target is not None:
+        # Diversification = 1 - sum(w^2) >= div_target
+        # sum(w^2) <= 1 - div_target
+        cp_constraints.append(cp.sum_squares(w) <= 1.0 - div_target)
+
     # Return Constraint
     min_return = constraints.get("min_return")
     if min_return is not None:
