@@ -5,75 +5,113 @@ from scipy.optimize import minimize
 from typing import Dict, Optional, List, Any, Union
 
 
-def entropy_pooling(
-    prior_probs: np.ndarray,
+def entropy_prog(
+    p: np.ndarray,
+    A: Optional[np.ndarray] = None,
+    b: Optional[np.ndarray] = None,
     Aeq: Optional[np.ndarray] = None,
     beq: Optional[np.ndarray] = None,
-    Aineq: Optional[np.ndarray] = None,
-    bineq: Optional[np.ndarray] = None,
-) -> np.ndarray:
+    verbose: bool = False,
+) -> Dict[str, Any]:
     """
-    Entropy Pooling algorithm.
-    Finds posterior probabilities p that minimize KL divergence from prior q,
-    subject to linear constraints on p: Aeq @ p = beq and Aineq @ p <= bineq.
+    Entropy pooling program for blending views on scenarios with a prior scenario-probability distribution.
+    
+    Equivalent to PortfolioAnalytics::EntropyProg in R.
+    Finds posterior probabilities p_ that minimize KL divergence from prior p,
+    subject to linear constraints: A @ p_ <= b and Aeq @ p_ = beq.
+
+    Parameters
+    ----------
+    p : np.ndarray
+        Prior probabilities (must sum to 1).
+    A : np.ndarray, optional
+        Inequality constraint matrix.
+    b : np.ndarray, optional
+        Inequality constraint vector.
+    Aeq : np.ndarray, optional
+        Equality constraint matrix.
+    beq : np.ndarray, optional
+        Equality constraint vector.
+    verbose : bool
+        If True, print optimization status.
+
+    Returns
+    -------
+    dict
+        {'p_': revised probabilities, 'optimizationPerformance': info}
     """
-    q = prior_probs.reshape(-1, 1)
-    J = len(prior_probs)
+    p = p.reshape(-1, 1)
+    J = len(p)
 
-    # Standard Aeq for sum(p) = 1
-    if Aeq is None:
-        Aeq = np.ones((1, J))
-        beq = np.array([[1.0]])
+    # Validate sum(p) == 1
+    if not (0.999 < np.sum(p) < 1.001):
+        raise ValueError("Sum of prior probabilities must equal 1")
 
-    # Dual problem for Entropy Pooling
-    # The constraints are on the expectations: E[V] <= m
-    # where V is the view matrix (scenarios x views)
-    # p * V' <= m
-    
-    # In this implementation, we use a simpler version focusing on 
-    # the constraints being directly on p if provided, or via expectations.
-    # For fully flexible views, we typically have constraints on E[X] = sum(p_j * X_j)
-    
-    k_eq = Aeq.shape[0]
-    k_ineq = Aineq.shape[0] if Aineq is not None else 0
-    
-    x0 = np.zeros(k_eq + k_ineq)
-    
+    # Handle empty constraints
+    k_ineq = A.shape[0] if A is not None and A.size > 0 else 0
+    k_eq = Aeq.shape[0] if Aeq is not None and Aeq.size > 0 else 0
+
+    if k_ineq + k_eq == 0:
+        raise ValueError("At least one equality or inequality constraint must be specified")
+
+    # Starting guess for dual variables (Lagrange multipliers)
+    x0 = np.zeros(k_ineq + k_eq)
+
     def dual_objective(x):
-        lambda_eq = x[:k_eq]
-        lambda_ineq = x[k_eq:]
+        l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+        v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
         
-        # p_j = q_j * exp(-1 - Aeq' * lambda_eq - Aineq' * lambda_ineq)
-        # We need sum(p_j) = 1, but Aeq[0,:] is already ones(1, T) and beq[0] is 1.0.
-        # The dual objective for entropy pooling (minimizing sum p*ln(p/q)) is:
-        # L(p, lambda) = sum p*ln(p/q) + lambda_eq'(Aeq*p - beq) + lambda_ineq'(Aineq*p - bineq)
-        # First order condition: ln(p_j/q_j) + 1 + Aeq_j'*lambda_eq + Aineq_j'*lambda_ineq = 0
-        # p_j = q_j * exp(-1 - Aeq_j'*lambda_eq - Aineq_j'*lambda_ineq)
+        exponent = np.zeros((J, 1))
+        if l is not None:
+            exponent -= A.T @ l
+        if v is not None:
+            exponent -= Aeq.T @ v
         
-        # To simplify, we let G_j = Aeq_j'*lambda_eq + Aineq_j'*lambda_ineq
-        # p_j(lambda) = q_j * exp(-G_j) / sum(q_i * exp(-G_i))
-        # The dual objective is: ln(sum q_i * exp(-G_i)) + lambda_eq'*beq + lambda_ineq'*bineq
+        log_p = np.log(np.maximum(p, 1e-32))
+        x_p = np.exp(log_p - 1 + exponent)
+        x_p = np.maximum(x_p, 1e-32)
         
-        exponent = -(Aeq.T @ lambda_eq)
-        if k_ineq > 0:
-            exponent -= (Aineq.T @ lambda_ineq)
-            
-        # Log-Sum-Exp trick
-        max_exp = np.max(exponent)
-        obj = np.log(np.sum(q.flatten() * np.exp(exponent - max_exp))) + max_exp
-        
-        obj += (lambda_eq @ beq.flatten())
-        if k_ineq > 0:
-            obj += (lambda_ineq @ bineq.flatten())
+        # We want to maximize L = -sum(x_p) - l'b - v'beq
+        # So we minimize -L = sum(x_p) + l'b + v'beq
+        obj = np.sum(x_p)
+        if l is not None:
+            obj += (l.T @ b.reshape(-1, 1))[0, 0]
+        if v is not None:
+            obj += (v.T @ beq.reshape(-1, 1))[0, 0]
             
         return obj
 
-    # Bounds for inequality multipliers (must be >= 0)
-    bounds = [(None, None)] * k_eq + [(0, None)] * k_ineq
+    def dual_gradient(x):
+        l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+        v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
+        
+        exponent = np.zeros((J, 1))
+        if l is not None:
+            exponent -= A.T @ l
+        if v is not None:
+            exponent -= Aeq.T @ v
+            
+        log_p = np.log(np.maximum(p, 1e-32))
+        x_p = np.exp(log_p - 1 + exponent)
+        x_p = np.maximum(x_p, 1e-32)
+        
+        # Grad of -L w.r.t l: -(A*x_p - b) = b - A*x_p
+        # Grad of -L w.r.t v: -(Aeq*x_p - beq) = beq - Aeq*x_p
+        grad = []
+        if l is not None:
+            grad.append((b.reshape(-1, 1) - A @ x_p).flatten())
+        if v is not None:
+            grad.append((beq.reshape(-1, 1) - Aeq @ x_p).flatten())
+            
+        return np.concatenate(grad)
+
+    # Inequality multipliers must be >= 0
+    bounds = [(0, None)] * k_ineq + [(None, None)] * k_eq
     
     res = minimize(
         dual_objective,
         x0,
+        jac=dual_gradient,
         method="L-BFGS-B",
         bounds=bounds,
         tol=1e-12,
@@ -81,47 +119,131 @@ def entropy_pooling(
     )
 
     if not res.success:
-        warnings.warn(
-            f"Entropy pooling optimization did not converge: {res.message}. "
-            "Returning prior probabilities unchanged — views may not be reflected.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return prior_probs
+        if verbose:
+            print(f"Entropy pooling optimization did not converge: {res.message}")
+        # Even if not success, we follow R behavior: if it fails, it might stop or return partial
+        # But we want to be robust.
 
     # Recover posterior probabilities
-    lambda_eq = res.x[:k_eq]
-    lambda_ineq = res.x[k_eq:]
-    exponent = -(Aeq.T @ lambda_eq)
-    if k_ineq > 0:
-        exponent -= (Aineq.T @ lambda_ineq)
+    l = res.x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+    v = res.x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
     
-    p = q.flatten() * np.exp(exponent)
-    p = p / np.sum(p)
-    return p
+    exponent = np.zeros((J, 1))
+    if l is not None:
+        exponent -= A.T @ l
+    if v is not None:
+        exponent -= Aeq.T @ v
+        
+    log_p = np.log(np.maximum(p, 1e-32))
+    p_post = np.exp(log_p - 1 + exponent)
+    
+    sum_p = np.sum(p_post)
+    if sum_p > 1e-12:
+        p_post = p_post / sum_p
+    else:
+        # Optimization failed catastrophically, fallback to prior
+        if verbose:
+            print("Entropy pooling sum of probabilities is near zero. Falling back to prior.")
+        p_post = p.flatten()
+
+    return {
+        "p_": p_post.flatten(),
+        "optimizationPerformance": {
+            "converged": res.success and (sum_p > 1e-12),
+            "iterations": res.nit,
+            "sumOfProbabilities": np.sum(p_post)
+        }
+    }
+
+
+def centroid_ranking(N: int) -> np.ndarray:
+    """
+    Computes Almgren-Chriss centroids for asset ranking.
+    
+    Parameters
+    ----------
+    N : int
+        Number of assets.
+        
+    Returns
+    -------
+    np.ndarray
+        Centroid vector in descending order (highest ranking first).
+    """
+    # c_n = 1/n * sum_{i=n}^N (1/i)
+    c = np.zeros(N)
+    inv_i = 1.0 / np.arange(1, N + 1)
+    for n in range(1, N + 1):
+        c[n-1] = np.mean(inv_i[n-1:])
+    return c
+
+
+def meucci_ranking(
+    R: pd.DataFrame, 
+    order: List[Union[int, str]],
+    p: Optional[np.ndarray] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Asset Ranking using Meucci's Entropy Pooling.
+    
+    Equivalent to PortfolioAnalytics::meucci.ranking.
+    """
+    if isinstance(R, pd.DataFrame):
+        asset_names = list(R.columns)
+        X = R.values
+    else:
+        X = np.asanyarray(R)
+        asset_names = [str(i) for i in range(X.shape[1])]
+        
+    J, N = X.shape
+    if p is None:
+        p = np.full(J, 1.0 / J)
+    
+    # Map order to indices if names are provided
+    order_idx = [asset_names.index(o) if isinstance(o, str) else o for o in order]
+    k = len(order_idx)
+    
+    # Equality constraints: sum(p) = 1
+    Aeq = np.ones((1, J))
+    beq = np.array([1.0])
+    
+    # Inequality constraints: E[R_{order[i]}] <= E[R_{order[i+1]}]
+    # A * p_ <= 0  => sum(p_j * (R_{j, order[i]} - R_{j, order[i+1]})) <= 0
+    V = X[:, order_idx[:-1]] - X[:, order_idx[1:]]
+    A = V.T # (k-1) x J
+    b = np.zeros(k - 1)
+    
+    res = entropy_prog(p, A=A, b=b, Aeq=Aeq, beq=beq)
+    p_post = res['p_']
+    
+    return meucci_moments(X, p_post)
 
 
 def meucci_views(
     R: pd.DataFrame, 
     views: List[Dict[str, Any]],
-    prior_probs: Optional[np.ndarray] = None
+    p: Optional[np.ndarray] = None
 ) -> np.ndarray:
     """
-    Automate the generation of constraints for Meucci's Entropy Pooling.
+    Automate the generation of constraints for Meucci's Entropy Pooling based on high-level view descriptions.
     
     Each view in 'views' is a dict:
     - {'type': 'relative', 'asset_high': 'A', 'asset_low': 'B'} -> E[R_A] > E[R_B]
     - {'type': 'absolute', 'asset': 'A', 'value': 0.02} -> E[R_A] = 0.02
     - {'type': 'inequality', 'asset': 'A', 'value': 0.05, 'direction': 'less'} -> E[R_A] <= 0.05
     """
-    T, N = R.shape
-    if prior_probs is None:
-        prior_probs = np.full(T, 1.0 / T)
+    if isinstance(R, pd.DataFrame):
+        asset_names = list(R.columns)
+        X = R.values
+    else:
+        X = np.asanyarray(R)
+        asset_names = [str(i) for i in range(X.shape[1])]
         
-    asset_names = list(R.columns)
-    X = R.values
+    J, N = X.shape
+    if p is None:
+        p = np.full(J, 1.0 / J)
     
-    Aeq_list = [np.ones((1, T))] # sum(p) = 1
+    Aeq_list = [np.ones((1, J))] # sum(p) = 1
     beq_list = [1.0]
     
     Aineq_list = []
@@ -132,15 +254,12 @@ def meucci_views(
         if v_type == 'relative':
             idx_h = asset_names.index(view['asset_high'])
             idx_l = asset_names.index(view['asset_low'])
-            # E[R_h - R_l] >= 0  => sum(p_j * (R_jh - R_jl)) >= 0
-            # sum(p_j * (R_jl - R_jh)) <= 0
-            # Aineq: (R_jl - R_jh) [1 x T]
+            # E[R_h - R_l] >= 0  => sum(p_j * (R_jl - R_jh)) <= 0
             Aineq_list.append((X[:, idx_l] - X[:, idx_h]).reshape(1, -1))
             bineq_list.append(0.0)
             
         elif v_type == 'absolute':
             idx = asset_names.index(view['asset'])
-            # sum(p_j * R_ji) = value
             Aeq_list.append(X[:, idx].reshape(1, -1))
             beq_list.append(view['value'])
             
@@ -148,41 +267,20 @@ def meucci_views(
             idx = asset_names.index(view['asset'])
             direction = view.get('direction', 'less')
             if direction == 'less':
-                # sum(p_j * R_ji) <= value
                 Aineq_list.append(X[:, idx].reshape(1, -1))
                 bineq_list.append(view['value'])
             else:
-                # sum(p_j * R_ji) >= value  => sum(p_j * -R_ji) <= -value
                 Aineq_list.append(-X[:, idx].reshape(1, -1))
                 bineq_list.append(-view['value'])
 
     Aeq = np.vstack(Aeq_list)
-    beq = np.array(beq_list).reshape(-1, 1)
+    beq = np.array(beq_list)
     
     Aineq = np.vstack(Aineq_list) if Aineq_list else None
-    bineq = np.array(bineq_list).reshape(-1, 1) if bineq_list else None
+    bineq = np.array(bineq_list) if bineq_list else None
     
-    return entropy_pooling(prior_probs, Aeq, beq, Aineq, bineq)
-
-
-def meucci_ranking(
-    R: pd.DataFrame, 
-    order: List[Union[int, str]],
-    prior_probs: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Convert a relative ranking into posterior probabilities.
-    'order' is ascending: [lowest, ..., highest]
-    """
-    asset_names = list(R.columns)
-    views = []
-    for i in range(len(order) - 1):
-        views.append({
-            'type': 'relative',
-            'asset_high': asset_names[order[i+1]] if isinstance(order[i+1], int) else order[i+1],
-            'asset_low': asset_names[order[i]] if isinstance(order[i], int) else order[i]
-        })
-    return meucci_views(R, views, prior_probs)
+    res = entropy_prog(p, A=Aineq, b=bineq, Aeq=Aeq, beq=beq)
+    return res['p_']
 
 
 def meucci_moments(R: np.ndarray, posterior_probs: np.ndarray) -> Dict[str, np.ndarray]:
@@ -200,4 +298,17 @@ def meucci_moments(R: np.ndarray, posterior_probs: np.ndarray) -> Dict[str, np.n
     R_centered = R - mu_p.T
     sigma_p = (R_centered.T * p.flatten()) @ R_centered
 
-    return {"mu": mu_p, "sigma": sigma_p}
+    return {"mu": mu_p.flatten(), "sigma": sigma_p}
+
+
+# Maintain backward compatibility for original names
+def entropy_pooling(
+    prior_probs: np.ndarray,
+    Aeq: Optional[np.ndarray] = None,
+    beq: Optional[np.ndarray] = None,
+    Aineq: Optional[np.ndarray] = None,
+    bineq: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Deprecated: use entropy_prog instead."""
+    res = entropy_prog(prior_probs, A=Aineq, b=bineq, Aeq=Aeq, beq=beq)
+    return res['p_']

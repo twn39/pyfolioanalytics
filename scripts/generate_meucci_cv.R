@@ -1,45 +1,48 @@
 library(PortfolioAnalytics)
 library(jsonlite)
-library(nloptr)
 
-# Setup test data
-set.seed(42)
-T <- 100
-N <- 3
-R_raw <- matrix(rnorm(T * N, mean = 0, sd = 0.01), nrow = T, ncol = N)
-colnames(R_raw) <- c("A", "B", "C")
+# Load data
+data(edhec)
+R <- as.matrix(edhec[, 1:5])
+T <- nrow(R)
+N <- ncol(R)
+
+# 1. Test Basic EntropyProg with Equality Constraints
 p_prior <- rep(1/T, T)
+# View: Expected return of first asset is 0.005 AND sum(p) = 1
+Aeq <- rbind(rep(1, T), R[, 1])
+beq <- rbind(1.0, 0.005)
+res_eq <- EntropyProg(p_prior, Aeq=Aeq, beq=beq)
 
-# 1. Test meucci.ranking (C < B < A)
-order_ranking <- c(3, 2, 1)
-res_ranking <- meucci.ranking(R_raw, p_prior, order_ranking)
-# R's meucci.ranking returns a list(mu=..., sigma=...) but it also computes p internally.
-# I need to capture p_ from the internal call or use meucci.moments manually.
+# 2. Test EntropyProg with Inequality Constraints
+# View: Expected return of second asset > third asset AND sum(p) = 1
+Aineq <- matrix(R[, 3] - R[, 2], nrow=1)
+bineq <- matrix(0, nrow=1)
+Aeq_ones <- matrix(rep(1, T), nrow=1)
+beq_ones <- matrix(1, nrow=1)
+res_ineq <- EntropyProg(p_prior, A=Aineq, b=bineq, Aeq=Aeq_ones, beq=beq_ones)
 
-# 2. Test Absolute View (A = 0.01)
-Aeq <- rbind(rep(1, T), R_raw[, 1])
-beq <- c(1.0, 0.01)
-res_absolute <- EntropyProg(p_prior, Aeq = Aeq, beq = beq)
+# 3. Test meucci.ranking
+# Order: asset 2 < asset 3 < asset 1 < asset 4 < asset 5
+order_vec <- c(2, 3, 1, 4, 5)
+res_ranking <- meucci.ranking(R, p_prior, order_vec)
 
-print("Ranking Result structure:")
-print(names(res_ranking))
-print("Absolute Result structure:")
-print(names(res_absolute))
-
-results <- list(
-  T = T,
-  N = N,
-  returns = R_raw,
-  p_prior = as.numeric(p_prior),
-  # Ranking results
-  ranking_order = order_ranking,
-  mu_ranking = as.numeric(res_ranking$mu),
-  # Absolute view results
-  target_mu_A = 0.01,
-  p_absolute = as.numeric(res_absolute$p_),
-  mu_absolute = as.numeric(colSums(R_raw * as.numeric(res_absolute$p_)))
+# Export to JSON
+output <- list(
+  input_R = R, # Export full R for parity
+  prior_probs = p_prior,
+  entropy_prog_eq = list(
+    p_posterior = as.vector(res_eq$p_),
+    converged = res_eq$optimizationPerformance$converged
+  ),
+  entropy_prog_ineq = list(
+    p_posterior = as.vector(res_ineq$p_),
+    converged = res_ineq$optimizationPerformance$converged
+  ),
+  meucci_ranking = list(
+    mu = as.vector(res_ranking$mu),
+    sigma = as.matrix(res_ranking$sigma)
+  )
 )
 
-print(str(results))
-
-write_json(results, "data/meucci_cv.json", auto_unbox = TRUE, pretty = TRUE, digits = 10)
+write_json(output, "data/meucci_cv.json", digits=10)
