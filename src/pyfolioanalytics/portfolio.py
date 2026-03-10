@@ -105,6 +105,33 @@ class Portfolio:
                     "active_share_benchmark": kwargs.get("benchmark"),
                 }
             )
+        elif type == "factor_exposure":
+            B = kwargs.get("B")
+            lower = kwargs.get("lower")
+            upper = kwargs.get("upper")
+            
+            if B is None or lower is None or upper is None:
+                raise ValueError("Factor exposure constraint requires B, lower, and upper.")
+            
+            # Convert B to matrix if it's a list or vector
+            if isinstance(B, (list, np.ndarray)) and not isinstance(B, pd.DataFrame):
+                B = np.array(B)
+                if B.ndim == 1:
+                    B = B.reshape(-1, 1)
+            
+            # Validate dimensions
+            if B.shape[0] != nassets:
+                raise ValueError(f"B must have {nassets} rows (number of assets).")
+            
+            nfactors = B.shape[1]
+            if len(lower) != nfactors or len(upper) != nfactors:
+                raise ValueError(f"lower and upper must have length {nfactors} (number of factors).")
+            
+            constraint.update({
+                "B": B,
+                "lower": np.array(lower),
+                "upper": np.array(upper)
+            })
         elif type == "robust":
             delta_mu = kwargs.get("delta_mu", 0.0)
             if isinstance(delta_mu, (int, float)):

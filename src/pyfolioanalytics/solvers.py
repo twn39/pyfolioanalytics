@@ -53,6 +53,15 @@ def solve_mvo(
         [w >= constraints["min"].values, w <= constraints["max"].values]
     )
 
+    # Factor Exposure Constraint
+    B = constraints.get("B")
+    if B is not None:
+        lower = constraints.get("lower")
+        upper = constraints.get("upper")
+        # B is N x K, w is N x 1 => B.T @ w is K x 1
+        cp_constraints.append(B.T @ w >= lower)
+        cp_constraints.append(B.T @ w <= upper)
+
     # Return Constraint
     min_return = constraints.get("min_return")
     if min_return is not None:
