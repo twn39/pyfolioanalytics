@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import norm
 from scipy.optimize import minimize_scalar
 from scipy.special import binom
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional
 import math
 import cvxpy as cp
 
@@ -96,25 +96,32 @@ def average_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
 
 
 def risk_contribution(weights: np.ndarray, sigma: np.ndarray) -> np.ndarray:
-    p_var = weights.T @ sigma @ weights
+    p_var = float(weights.T @ sigma @ weights)
+    # Guard against zero-variance portfolios (e.g. degenerate weights)
+    if p_var < 1e-14:
+        return np.zeros_like(weights)
     marginal_contribution = (sigma @ weights) / np.sqrt(p_var)
     return weights * marginal_contribution
 
 
-def EVaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
-    losses = -(R @ weights)
+def _solve_evar_scalar(losses: np.ndarray, alpha: float) -> float:
+    """Shared log-sum-exp minimisation used by EVaR and EDaR."""
     T = len(losses)
-    alpha = 1 - p
 
-    def evar_obj(z):
+    def evar_obj(z: float) -> float:
         if z <= 0:
             return 1e10
-        m = np.max(losses / z)
-        val = z * (m + np.log(np.sum(np.exp(losses / z - m)) / (T * alpha)))
-        return val
+        # Log-sum-exp trick for numerical stability
+        scaled = losses / z
+        m = np.max(scaled)
+        return z * (m + np.log(np.sum(np.exp(scaled - m)) / (T * alpha)))
 
     res = minimize_scalar(evar_obj, bounds=(1e-6, 100), method="bounded")
     return float(res.fun)
+
+
+def EVaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
+    return _solve_evar_scalar(-(R @ weights), 1 - p)
 
 
 def CDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
@@ -131,20 +138,8 @@ def CDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
 
 def EDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     p_returns = R @ weights
-    drawdowns = calculate_drawdowns(p_returns)
-    losses = -drawdowns 
-    T = len(losses)
-    alpha = 1 - p
-
-    def evar_obj(z):
-        if z <= 0:
-            return 1e10
-        m = np.max(losses / z)
-        val = z * (m + np.log(np.sum(np.exp(losses / z - m)) / (T * alpha)))
-        return val
-
-    res = minimize_scalar(evar_obj, bounds=(1e-6, 100), method="bounded")
-    return float(res.fun)
+    # Apply EVaR to the drawdown series (not the raw returns)
+    return _solve_evar_scalar(-calculate_drawdowns(p_returns), 1 - p)
 
 
 def RLVaR(
@@ -167,7 +162,7 @@ def RLVaR(
     prob = cp.Problem(cp.Maximize(Z @ losses), constraints)
     try:
         prob.solve(solver=cp.SCS, eps=1e-5)
-    except:
+    except Exception:
         prob.solve()
     return float(prob.value)
 
@@ -194,7 +189,7 @@ def RLDaR(
     prob = cp.Problem(cp.Maximize(Z @ losses), constraints)
     try:
         prob.solve(solver=cp.SCS, eps=1e-5)
-    except:
+    except Exception:
         prob.solve()
     return float(prob.value)
 
@@ -206,19 +201,17 @@ def owa_risk(weights: np.ndarray, R: np.ndarray, owa_weights: np.ndarray) -> flo
 
 
 def owa_l_moment_weights(T: int, k: int = 2) -> np.ndarray:
-    w = []
-    for i in range(1, T + 1):
-        a = 0
-        for j in range(k):
-            a += (
-                (-1) ** j
-                * binom(k - 1, j)
-                * binom(i - 1, k - 1 - j)
-                * binom(T - i, j)
-            )
-        a *= 1.0 / (k * binom(T, k))
-        w.append(a)
-    return np.array(w)
+    # Vectorized via broadcasting over the double loop on i and j
+    i_arr = np.arange(1, T + 1, dtype=float)   # shape (T,)
+    j_arr = np.arange(k, dtype=float)           # shape (k,)
+    # Expand dims for broadcasting: (T, k)
+    i_col = i_arr[:, np.newaxis]
+    j_row = j_arr[np.newaxis, :]
+    signs = (-1.0) ** j_row
+    # scipy binom is element-wise on arrays
+    terms = signs * binom(k - 1, j_row) * binom(i_col - 1, k - 1 - j_row) * binom(T - i_col, j_row)
+    w = terms.sum(axis=1) / (k * binom(T, k))
+    return w
 
 
 def l_moment(R: np.ndarray, weights: np.ndarray, k: int = 2) -> float:
@@ -292,9 +285,9 @@ def owa_l_moment_crm_weights(
                 else:
                     try:
                         problem.solve(solver=cp.CLARABEL, verbose=False)
-                    except:
+                    except Exception:
                         problem.solve()
-            except:
+            except Exception:
                 problem.solve()
 
         if phi.value is None:

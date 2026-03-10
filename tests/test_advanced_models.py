@@ -9,12 +9,6 @@ import os
 
 
 @pytest.fixture
-def stocks_data():
-    df = pd.read_csv("data/stock_returns.csv", index_col=0, parse_dates=True).iloc[:100]
-    return df
-
-
-@pytest.fixture
 def riskfolio_cv():
     path = "data/riskfolio_cv.json"
     if not os.path.exists(path):
@@ -24,12 +18,12 @@ def riskfolio_cv():
 
 
 def test_kelly_optimization_parity(stocks_data, riskfolio_cv):
-    assets = stocks_data.columns.tolist()
+    assets = stocks_data.iloc[:100].columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
     portfolio.add_constraint(type="long_only")
 
-    res = optimize_portfolio(stocks_data, portfolio, optimize_method="Kelly")
+    res = optimize_portfolio(stocks_data.iloc[:100], portfolio, optimize_method="Kelly")
     w_ours = res["weights"].values
 
     # Ground truth from JSON
@@ -39,12 +33,12 @@ def test_kelly_optimization_parity(stocks_data, riskfolio_cv):
 
 
 def test_max_diversification_parity(stocks_data, riskfolio_cv):
-    assets = stocks_data.columns.tolist()
+    assets = stocks_data.iloc[:100].columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
     portfolio.add_constraint(type="long_only")
 
-    res = optimize_portfolio(stocks_data, portfolio, optimize_method="MDIV")
+    res = optimize_portfolio(stocks_data.iloc[:100], portfolio, optimize_method="MDIV")
     w_ours = res["weights"].values
 
     # Ground truth from JSON
@@ -54,16 +48,16 @@ def test_max_diversification_parity(stocks_data, riskfolio_cv):
 
 
 def test_mdiv_ratio_parity(stocks_data, riskfolio_cv):
-    assets = stocks_data.columns.tolist()
+    assets = stocks_data.iloc[:100].columns.tolist()
     portfolio = Portfolio(assets=assets)
     portfolio.add_constraint(type="full_investment")
     portfolio.add_constraint(type="long_only")
 
-    res = optimize_portfolio(stocks_data, portfolio, optimize_method="MDIV")
+    res = optimize_portfolio(stocks_data.iloc[:100], portfolio, optimize_method="MDIV")
 
     # Check if Diversification Ratio is calculated correctly
     w = res["weights"].values
-    cov = stocks_data.cov().values
+    cov = stocks_data.iloc[:100].cov().values
     vols = np.sqrt(np.diag(cov))
 
     p_vol = np.sqrt(w @ cov @ w)

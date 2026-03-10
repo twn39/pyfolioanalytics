@@ -68,7 +68,8 @@ def backtest_portfolio(
             start_idx = max(0, loc - rolling_window)
             R_train = R.iloc[start_idx:loc]
         else:
-            R_train = R[:start_date]
+            # Strict less-than prevents rebalance-date return leaking into training
+            R_train = R.loc[R.index < start_date]
 
         if len(R_train) >= 2:
             active_portfolio = portfolio

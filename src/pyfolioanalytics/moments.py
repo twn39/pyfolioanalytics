@@ -1,26 +1,21 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Any
-from .portfolio import Portfolio
 from .factors import statistical_factor_model, factor_model_covariance, ac_ranking
 
 
 def M3_MM(R: np.ndarray) -> np.ndarray:
     T, N = R.shape
-    M3 = np.zeros((N, N * N))
-    for t in range(T):
-        rt = R[t, :].reshape(-1, 1)
-        M3 += np.dot(rt, np.kron(rt.T, rt.T))
-    return M3 / T
+    # Vectorized: M3[i,j,k] = mean(R[:,i] * R[:,j] * R[:,k])
+    M3 = np.einsum('ti,tj,tk->ijk', R, R, R) / T
+    return M3.reshape(N, N * N)
 
 
 def M4_MM(R: np.ndarray) -> np.ndarray:
     T, N = R.shape
-    M4 = np.zeros((N, N**3))
-    for t in range(T):
-        rt = R[t, :].reshape(-1, 1)
-        M4 += np.dot(rt, np.kron(rt.T, np.kron(rt.T, rt.T)))
-    return M4 / T
+    # Vectorized: M4[i,j,k,l] = mean(R[:,i] * R[:,j] * R[:,k] * R[:,l])
+    M4 = np.einsum('ti,tj,tk,tl->ijkl', R, R, R, R) / T
+    return M4.reshape(N, N ** 3)
 
 
 def M3_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
@@ -99,42 +94,42 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
         for i in range(N):
             for j in range(N):
                 for k_idx in range(N):
-                    for l in range(N):
+                    for l_idx in range(N):
                         kijkl = 0.0
-                        if (i == j) or (i == k_idx) or (i == l) or (j == k_idx) or (j == l) or (k_idx == l):
-                            if (i == j) and (i == k_idx) and (i == l):
+                        if (i == j) or (i == k_idx) or (i == l_idx) or (j == k_idx) or (j == l_idx) or (k_idx == l_idx):
+                            if (i == j) and (i == k_idx) and (i == l_idx):
                                 kijkl = 6 * b[i] * b[i] * f2_val * s2[i] + s4[i]
-                            elif ((i == j) and (i == k_idx)) or ((i == j) and (i == l)) or ((i == k_idx) and (i == l)) or ((j == k_idx) and (j == l)):
+                            elif ((i == j) and (i == k_idx)) or ((i == j) and (i == l_idx)) or ((i == k_idx) and (i == l_idx)) or ((j == k_idx) and (j == l_idx)):
                                 if (i == j) and (i == k_idx):
-                                    kijkl = 3 * b[i] * b[l] * f2_val * s2[i]
-                                elif (i == j) and (i == l):
+                                    kijkl = 3 * b[i] * b[l_idx] * f2_val * s2[i]
+                                elif (i == j) and (i == l_idx):
                                     kijkl = 3 * b[i] * b[k_idx] * f2_val * s2[i]
-                                elif (i == k_idx) and (i == l):
+                                elif (i == k_idx) and (i == l_idx):
                                     kijkl = 3 * b[i] * b[j] * f2_val * s2[i]
-                                elif (j == k_idx) and (j == l):
+                                elif (j == k_idx) and (j == l_idx):
                                     kijkl = 3 * b[j] * b[i] * f2_val * s2[j]
-                            elif ((i == j) and (k_idx == l)) or ((i == k_idx) and (j == l)) or ((i == l) and (j == k_idx)):
-                                if (i == j) and (k_idx == l):
+                            elif ((i == j) and (k_idx == l_idx)) or ((i == k_idx) and (j == l_idx)) or ((i == l_idx) and (j == k_idx)):
+                                if (i == j) and (k_idx == l_idx):
                                     kijkl = b[i] * b[i] * f2_val * s2[k_idx] + b[k_idx] * b[k_idx] * f2_val * s2[i] + s2[i] * s2[k_idx]
-                                elif (i == k_idx) and (j == l):
+                                elif (i == k_idx) and (j == l_idx):
                                     kijkl = b[i] * b[i] * f2_val * s2[j] + b[j] * b[j] * f2_val * s2[i] + s2[i] * s2[j]
-                                elif (i == l) and (j == k_idx):
+                                elif (i == l_idx) and (j == k_idx):
                                     kijkl = b[i] * b[i] * f2_val * s2[j] + b[j] * b[j] * f2_val * s2[i] + s2[i] * s2[j]
                             else:
                                 if i == j:
-                                    kijkl = b[k_idx] * b[l] * f2_val * s2[i]
+                                    kijkl = b[k_idx] * b[l_idx] * f2_val * s2[i]
                                 elif i == k_idx:
-                                    kijkl = b[j] * b[l] * f2_val * s2[i]
-                                elif i == l:
+                                    kijkl = b[j] * b[l_idx] * f2_val * s2[i]
+                                elif i == l_idx:
                                     kijkl = b[j] * b[k_idx] * f2_val * s2[i]
                                 elif j == k_idx:
-                                    kijkl = b[i] * b[l] * f2_val * s2[j]
-                                elif j == l:
+                                    kijkl = b[i] * b[l_idx] * f2_val * s2[j]
+                                elif j == l_idx:
                                     kijkl = b[i] * b[k_idx] * f2_val * s2[j]
-                                elif k_idx == l:
+                                elif k_idx == l_idx:
                                     kijkl = b[i] * b[j] * f2_val * s2[k_idx]
 
-                        D[l, i * N * N + j * N + k_idx] = kijkl
+                        D[l_idx, i * N * N + j * N + k_idx] = kijkl
     else:
 
         # Multi-factor residual approximation
@@ -227,9 +222,11 @@ def set_portfolio_moments(
     else:
         raise NotImplementedError(f"Method '{method}' is not implemented.")
 
-    # Check if higher order moments are needed
+    # Only compute higher-order moments for modified (Cornish-Fisher) VaR/ES,
+    # not for Gaussian — avoids O(T·N⁴) work when not needed.
     needs_m3_m4 = any(
         obj["name"] in ["VaR", "ES", "mVaR", "mES"]
+        and obj.get("arguments", {}).get("method", "gaussian") == "modified"
         for obj in portfolio.objectives
         if obj.get("enabled", True)
     )

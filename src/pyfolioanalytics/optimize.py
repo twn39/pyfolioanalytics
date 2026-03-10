@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional
 from .portfolio import Portfolio
-from .moments import set_portfolio_moments, M3_MM, M4_MM
+from .moments import set_portfolio_moments
 from .risk import (
     VaR,
     ES,
@@ -14,14 +14,12 @@ from .risk import (
     EDaR,
     RLVaR,
     RLDaR,
-    l_moment,
     owa_risk,
     owa_gmd_weights,
     owa_l_moment_crm_weights,
 )
 from .ml import hrp_optimization, herc_optimization, nco_optimization
 from .solvers import (
-    solve_portfolio_cvxpy,
     solve_kelly,
     solve_mdiv,
     solve_noc,
@@ -31,6 +29,7 @@ from .solvers import (
     solve_rlvar,
     solve_rldar,
     solve_evar,
+    solve_nonlinear,
 )
 
 
@@ -91,7 +90,6 @@ def calculate_objective_measures(
             measures[obj_name] = owa_risk(weights, R, owa_weights)
         
         # Track tracking error for objectives or constraints
-        te_target = obj_args.get("target") or (constraints.get("target") if constraints and (obj_name == "tracking_error" or obj_type == "tracking_error") else None)
         te_benchmark = obj_args.get("benchmark") or (constraints.get("benchmark") if constraints else None)
         
         if (obj_name == "tracking_error" or obj_type == "tracking_error" or (obj_name == "StdDev" and te_benchmark is not None)) and sigma is not None:
@@ -139,7 +137,8 @@ def optimize_portfolio(
     # 3. Setup Constraints
     constraints = portfolio.get_constraints()
     for k in ["delta_mu", "robust_mu_type", "sigma_mu", "k_mu", "robust_sigma_type", "sigma_sigma", "k_sigma"]:
-        if k in kwargs: constraints[k] = kwargs[k]
+        if k in kwargs:
+            constraints[k] = kwargs[k]
 
     # 4. Specialized ML methods
     if optimize_method == "HRP":
@@ -181,12 +180,18 @@ def optimize_portfolio(
             result = solve_owa(R.values, constraints, new_objectives, **kwargs)
 
     if result is None:
-        if optimize_method == "Kelly": result = solve_kelly(R.values, constraints, **kwargs)
-        elif optimize_method == "MDIV": result = solve_mdiv(moments, constraints, **kwargs)
-        elif optimize_method == "NOC": result = solve_noc(R.values, moments, constraints, portfolio.objectives, **kwargs)
-        elif optimize_method == "CLA": result = solve_cla(moments, constraints, portfolio.objectives, **kwargs)
-        else: 
-            # Risk budget or standard MVO
+        if optimize_method == "Kelly":
+            result = solve_kelly(R.values, constraints, **kwargs)
+        elif optimize_method == "MDIV":
+            result = solve_mdiv(moments, constraints, **kwargs)
+        elif optimize_method == "NOC":
+            result = solve_noc(R.values, moments, constraints, portfolio.objectives, **kwargs)
+        elif optimize_method == "CLA":
+            result = solve_cla(moments, constraints, portfolio.objectives, **kwargs)
+        elif has_risk_budget:
+            # Risk budget (ERC) requires nonlinear solver — risk contributions are nonlinear in w
+            result = solve_nonlinear(moments, constraints, portfolio.objectives, R=R.values, **kwargs)
+        else:
             from .solvers import solve_mvo
             result = solve_mvo(moments, constraints, portfolio.objectives, **kwargs)
 
@@ -241,11 +246,13 @@ def create_efficient_frontier(
 ) -> pd.DataFrame:
     port_min = portfolio.copy().clear_objectives().add_objective(type="risk", name="StdDev")
     res_min = optimize_portfolio(R, port_min, **kwargs)
-    if res_min["status"] not in ["optimal", "feasible", "optimal_inaccurate"]: raise ValueError("Min risk portfolio failed")
+    if res_min["status"] not in ["optimal", "feasible", "optimal_inaccurate"]:
+        raise ValueError("Min risk portfolio failed")
 
     port_max = portfolio.copy().clear_objectives().add_objective(type="return")
     res_max = optimize_portfolio(R, port_max, **kwargs)
-    if res_max["status"] not in ["optimal", "feasible", "optimal_inaccurate"]: raise ValueError("Max return portfolio failed")
+    if res_max["status"] not in ["optimal", "feasible", "optimal_inaccurate"]:
+        raise ValueError("Max return portfolio failed")
 
     target_returns = np.linspace(res_min["objective_measures"]["mean"], res_max["objective_measures"]["mean"], n_portfolios)
     frontier_data = []
@@ -254,6 +261,7 @@ def create_efficient_frontier(
         res = optimize_portfolio(R, port_tmp, **kwargs)
         if res["status"] in ["optimal", "feasible", "optimal_inaccurate"]:
             row = res["objective_measures"].copy()
-            for asset, weight in res["weights"].items(): row[asset] = weight
+            for asset, weight in res["weights"].items():
+                row[asset] = weight
             frontier_data.append(row)
     return pd.DataFrame(frontier_data)

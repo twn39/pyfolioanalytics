@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import json
-import pytest
 from pyfolioanalytics.moments import set_portfolio_moments, M3_SFM, M4_SFM
 from pyfolioanalytics.portfolio import Portfolio
 
@@ -18,8 +17,7 @@ def test_real_data_advanced_moments_cv():
     
     # 2. Test Robust Moments (MCD)
     # Skipping exact comparison due to structural differences between sklearn and robustbase
-    moments_robust = set_portfolio_moments(R_sub, port, method="robust")
-    # np.testing.assert_allclose(moments_robust["mu"].flatten(), cv_data["mu_robust"], rtol=1e-4, atol=1e-5)
+    _ = set_portfolio_moments(R_sub, port, method="robust")
     
     # 3. Test Factor Model Comoments (k=1)
     m3_py = M3_SFM(R_sub, k=1)

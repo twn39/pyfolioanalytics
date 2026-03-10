@@ -5,14 +5,9 @@ import riskfolio as rp
 from pyfolioanalytics.ml import hrp_optimization, herc_optimization, nco_optimization
 
 
-@pytest.fixture
-def stocks_data():
-    df = pd.read_csv("data/stock_returns.csv", index_col=0, parse_dates=True)
-    return df
-
-
-@pytest.fixture
-def edhec_data():
+# Custom fixture: applies dayfirst parsing and column renaming required by this module's tests
+@pytest.fixture(scope="module")
+def ml_edhec_data():
     df = pd.read_csv("data/edhec.csv", index_col=0)
     df.index = pd.to_datetime(df.index, dayfirst=True)
     df = df.iloc[:, :5].copy()  # First 5 assets
@@ -61,12 +56,12 @@ def test_hrp_cross_validation(stocks_data):
     np.testing.assert_allclose(w_py.values, w_rp.values.flatten(), atol=1e-6)
 
 
-def test_herc_cross_validation(edhec_data):
+def test_herc_cross_validation(ml_edhec_data):
     # PyfolioAnalytics
-    w_py = herc_optimization(edhec_data, linkage_method="ward")
+    w_py = herc_optimization(ml_edhec_data, linkage_method="ward")
 
     # Riskfolio-Lib
-    port = rp.HCPortfolio(returns=edhec_data)
+    port = rp.HCPortfolio(returns=ml_edhec_data)
     w_rp = port.optimization(
         model="HERC",
         codependence="pearson",

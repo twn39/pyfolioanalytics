@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -80,7 +81,12 @@ def entropy_pooling(
     )
 
     if not res.success:
-        # Fallback to current prior if optimization fails
+        warnings.warn(
+            f"Entropy pooling optimization did not converge: {res.message}. "
+            "Returning prior probabilities unchanged — views may not be reflected.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return prior_probs
 
     # Recover posterior probabilities

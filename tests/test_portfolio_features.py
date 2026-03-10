@@ -1,14 +1,6 @@
-import pytest
-import pandas as pd
 import numpy as np
 from pyfolioanalytics.portfolio import Portfolio, MultLayerPortfolio, RegimePortfolio
 from pyfolioanalytics.optimize import optimize_portfolio
-
-
-@pytest.fixture
-def stocks_data():
-    df = pd.read_csv("data/stock_returns.csv", index_col=0, parse_dates=True)
-    return df
 
 
 def test_group_constraints(stocks_data):

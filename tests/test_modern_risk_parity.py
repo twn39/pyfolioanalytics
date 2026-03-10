@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pytest
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 from pyfolioanalytics.risk import EDaR, RLVaR

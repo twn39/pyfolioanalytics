@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import linkage, leaves_list, fcluster
 from scipy.spatial.distance import squareform
-from typing import List, Dict, Any
+from typing import List
 from .dbht import DBHTs
 
 

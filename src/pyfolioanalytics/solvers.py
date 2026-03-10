@@ -278,10 +278,9 @@ def solve_nonlinear(
     n = len(moments["mu"])
     sigma = moments["sigma"]
     mu = moments["mu"].flatten()
-    w0 = np.full(n, 1.0 / n)
     R = kwargs.get("R")
 
-    def objective_fn(w):
+    def objective_fn(w: np.ndarray) -> float:
         if np.sum(w) == 0:
             return 1e10
         out = 0.0
@@ -297,19 +296,21 @@ def solve_nonlinear(
                 val = p_var if name == "var" else np.sqrt(p_var)
                 out += mult * val
             if obj["type"] == "risk_budget":
-                p_var = np.dot(w.T, np.dot(sigma, w))
-                if p_var <= 0:
+                p_var = float(np.dot(w.T, np.dot(sigma, w)))
+                if p_var <= 1e-14:
                     return 1e10
                 rc = w * np.dot(sigma, w) / p_var
+                # Adaptive penalty: scales with 1/p_var so it stays well-conditioned
+                # regardless of whether returns are in % or decimal form.
+                penalty_scale = 1.0 / p_var
                 if obj.get("min_concentration") or obj.get("min_difference"):
                     target = np.full(n, 1.0 / n)
-                    out += 1e4 * np.sum((rc - target) ** 2)
+                    out += penalty_scale * np.sum((rc - target) ** 2)
                 elif obj.get("max_prisk") is not None:
                     max_p = np.array(obj["max_prisk"])
-                    out += 1e4 * np.sum(np.maximum(0, rc - max_p) ** 2)
+                    out += penalty_scale * np.sum(np.maximum(0, rc - max_p) ** 2)
             if name == "EVaR" and R is not None:
                 from .risk import EVaR
-
                 out += mult * EVaR(w, R, p=obj.get("arguments", {}).get("p", 0.95))
         return out
 
@@ -325,18 +326,34 @@ def solve_nonlinear(
         )
 
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
-    res = minimize(
-        objective_fn,
-        w0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=cons,
-        options={"ftol": 1e-12, "maxiter": 1000},
-    )
+    minimize_opts = {"ftol": 1e-12, "maxiter": 1000}
+
+    # Multi-start restarts: ERC is well-posed but SLSQP can get stuck for
+    # highly correlated assets.  5 Dirichlet draws cover the simplex better.
+    best_res = None
+    rng = np.random.default_rng(0)
+    starting_points = [np.full(n, 1.0 / n)] + [
+        rng.dirichlet(np.ones(n)) for _ in range(4)
+    ]
+    for w0 in starting_points:
+        res = minimize(
+            objective_fn,
+            w0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=cons,
+            options=minimize_opts,
+        )
+        if res.success and (best_res is None or res.fun < best_res.fun):
+            best_res = res
+
+    if best_res is None:
+        best_res = res  # Last attempt even if unsuccessful
+
     return {
-        "status": "optimal" if res.success else res.message,
-        "weights": res.x if res.success else None,
-        "obj_value": res.fun,
+        "status": "optimal" if best_res.success else best_res.message,
+        "weights": best_res.x if best_res.success else None,
+        "obj_value": best_res.fun,
     }
 
 
@@ -627,10 +644,10 @@ def solve_rlvar(
     # Try different solvers
     try:
         prob.solve(solver=cp.SCS, verbose=False, eps=1e-5)
-    except:
+    except Exception:
         try:
             prob.solve(solver=cp.CLARABEL, verbose=False)
-        except:
+        except Exception:
             prob.solve()
 
     return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
@@ -698,10 +715,10 @@ def solve_rldar(
     
     try:
         prob.solve(solver=cp.SCS, eps=1e-5)
-    except:
+    except Exception:
         try:
             prob.solve(solver=cp.CLARABEL)
-        except:
+        except Exception:
             prob.solve()
 
     return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}

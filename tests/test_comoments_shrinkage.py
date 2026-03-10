@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
-import pytest
-from pyfolioanalytics.moments import set_portfolio_moments, M3_SFM, M4_SFM, shrink_comoments
+from pyfolioanalytics.moments import set_portfolio_moments, M3_SFM, M4_SFM
 from pyfolioanalytics.portfolio import Portfolio
 
 def test_comoments_factor_model_smoke():
@@ -80,7 +79,6 @@ def test_comoments_cv():
     
     # 3. FM k=2
     m3_fm2_py = M3_SFM(R_df, k=2)
-    m4_fm2_py = M4_SFM(R_df, k=2)
-    
+
     np.testing.assert_allclose(m3_fm2_py.flatten(), cv_data["m3_fm2"], rtol=1e-5)
-    # np.testing.assert_allclose(m4_fm2_py.flatten(), cv_data["m4_fm2"], rtol=1e-5) # Simplified in Python
+    # M4_SFM k=2 skipped: simplified Python approximation diverges from R reference

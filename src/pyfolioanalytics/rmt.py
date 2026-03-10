@@ -16,27 +16,24 @@ def marchenko_pastur_pdf(x: np.ndarray, q: float, sigma2: float = 1.0) -> np.nda
     pdf = q / (2 * np.pi * sigma2 * x_safe) * np.sqrt(np.maximum(0, (e_max - x) * (x - e_min)))
     return pdf
 
-def _fit_err(sigma2: float, eigenvalues: np.ndarray, q: float, n_bins: int = 1000) -> float:
-    """
-    SSE between empirical and theoretical MP PDF.
-    """
-    if sigma2 <= 0:
-        return 1e10
-    # Empirical PDF
-    hist, bin_edges = np.histogram(eigenvalues, bins=n_bins, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-    # Theoretical PDF at bin centers
-    pdf_theo = marchenko_pastur_pdf(bin_centers, q, sigma2)
-    
-    return float(np.sum((hist - pdf_theo)**2))
-
 def find_max_eigenvalue(eigenvalues: np.ndarray, q: float) -> Tuple[float, float]:
     """
     Find the maximum eigenvalue that belongs to the noise component.
     Returns (e_max, fitted_sigma2).
+    Histogram is computed once and captured in closure to avoid redundant work
+    inside the scalar minimiser (which may call the objective hundreds of times).
     """
-    res = minimize_scalar(_fit_err, bounds=(1e-5, 1.0), args=(eigenvalues, q), method='bounded')
+    # Pre-compute empirical PDF once — eigenvalues don't change during fitting
+    hist, bin_edges = np.histogram(eigenvalues, bins=1000, density=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    def _fit_err(sigma2: float) -> float:
+        if sigma2 <= 0:
+            return 1e10
+        pdf_theo = marchenko_pastur_pdf(bin_centers, q, sigma2)
+        return float(np.sum((hist - pdf_theo) ** 2))
+
+    res = minimize_scalar(_fit_err, bounds=(1e-5, 1.0), args=(), method='bounded')
     sigma2 = res.x
     e_max = sigma2 * (1 + np.sqrt(1.0 / q))**2
     return e_max, sigma2
@@ -146,6 +143,8 @@ def gerber_statistic(
 def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
     """
     Remove the market component (first principal components) from covariance.
+    Eigenvalues are set to a small positive value rather than 0 to keep the
+    matrix invertible (avoids singular covariance passed to MVO solvers).
     """
     vals, vecs = np.linalg.eigh(sigma)
     idx = np.argsort(vals)[::-1]
@@ -153,7 +152,8 @@ def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
     vecs = vecs[:, idx]
     
     vals_detoned = np.copy(vals)
-    vals_detoned[:n_components] = 0.0
+    # Use a tiny positive floor instead of 0 so the matrix stays positive-definite
+    vals_detoned[:n_components] = 1e-8
     
     sigma_detoned = vecs @ np.diag(vals_detoned) @ vecs.T
     return sigma_detoned
@@ -161,17 +161,19 @@ def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
 def bootstrap_uncertainty_set(
     R: pd.DataFrame, 
     n_sim: int = 1000, 
-    q: float = 0.05
+    q: float = 0.05,
+    random_state: int | None = None,
 ) -> Dict[str, Any]:
     """
     Construct uncertainty sets for mu and sigma using bootstrap.
     """
     T, N = R.shape
+    rng = np.random.default_rng(random_state)
     mu_sims = []
     sigma_sims = []
     
     for _ in range(n_sim):
-        idx = np.random.choice(T, size=T, replace=True)
+        idx = rng.choice(T, size=T, replace=True)
         R_boot = R.iloc[idx]
         mu_sims.append(R_boot.mean().values)
         sigma_sims.append(R_boot.cov().values)
@@ -188,7 +190,6 @@ def bootstrap_uncertainty_set(
     mu_cov = np.cov(mu_sims, rowvar=False)
     
     # 3. Ellipsoidal uncertainty for sigma
-    # Reshape sigma_sims to (n_sim, N^2)
     sigma_vecs = sigma_sims.reshape(n_sim, -1)
     sigma_mean = np.mean(sigma_sims, axis=0)
     sigma_cov = np.cov(sigma_vecs, rowvar=False)

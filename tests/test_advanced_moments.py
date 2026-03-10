@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import json
-import pytest
 from pyfolioanalytics.risk import owa_l_moment_weights, l_moment
 from pyfolioanalytics.moments import set_portfolio_moments
 from pyfolioanalytics.portfolio import Portfolio

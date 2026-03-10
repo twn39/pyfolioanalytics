@@ -1,20 +1,8 @@
-import pandas as pd
 import numpy as np
-import pytest
-import os
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio, create_efficient_frontier
 from pyfolioanalytics.backtest import optimize_portfolio_rebalancing
 from pyfolioanalytics.moments import set_portfolio_moments
-
-
-@pytest.fixture
-def stock_returns():
-    path = "data/stock_returns.csv"
-    if not os.path.exists(path):
-        pytest.skip("Stock returns data not found.")
-    df = pd.read_csv(path, index_col=0, parse_dates=True)
-    return df
 
 
 def test_mvo_on_real_data(stock_returns):
@@ -47,8 +35,8 @@ def test_erc_on_real_data(stock_returns):
 
     assert res["status"] == "optimal"
     pct_rc = res["objective_measures"]["pct_contrib_StdDev"]
-    # Check if contributions are nearly equal (1/5 = 0.2)
-    np.testing.assert_allclose(pct_rc, np.full(5, 0.2), atol=1e-2)
+    # ERC: each asset should contribute ~20%. SLSQP with multi-start should be tight.
+    np.testing.assert_allclose(pct_rc, np.full(5, 0.2), atol=5e-3)
 
 
 def test_frontier_on_real_data(stock_returns):

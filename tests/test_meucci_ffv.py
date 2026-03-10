@@ -82,3 +82,24 @@ def test_meucci_cv():
     
     moments_absolute = meucci_moments(R_raw, p_absolute_actual)
     np.testing.assert_allclose(moments_absolute["mu"].flatten(), cv_data["mu_absolute"], rtol=1e-4)
+
+
+def test_meucci_entropy_pooling_convergence_warning():
+    """Verify that entropy pooling emits a warning and returns prior
+    when optimization fails (e.g., due to contradictory views)."""
+    np.random.seed(42)
+    R = pd.DataFrame(np.random.randn(50, 2), columns=["A", "B"])
+    
+    # Create contradictory/infeasible absolute views using infinity to force deterministic solver failure
+    views = [
+        {"type": "absolute", "asset": "A", "value": np.inf},
+        {"type": "absolute", "asset": "A", "value": -np.inf}
+    ]
+    
+    with pytest.warns(RuntimeWarning, match="Entropy pooling optimization did not converge"):
+        p_post = meucci_views(R, views)
+    
+    # When solver fails, it should return the prior (uniform probabilities 1/T)
+    T = len(R)
+    expected_prior = np.ones(T) / T
+    np.testing.assert_allclose(p_post, expected_prior)

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 from pyfolioanalytics.cla import CLA
@@ -18,9 +19,7 @@ def test_cla_min_vol():
     port.add_constraint(type="box", min=0.0, max=1.0)
     port.add_objective(type="risk", name="StdDev")
 
-    # Debug moments
     moments = set_portfolio_moments(R, port)
-    print(f"\nAsset Means: {moments['mu'].flatten()}")
 
     # Solve with standard MVO (CVXPY)
     res_mvo = optimize_portfolio(R, port, optimize_method="ROI")
@@ -34,8 +33,6 @@ def test_cla_min_vol():
 
     var_mvo = w_mvo.T @ sigma @ w_mvo
     var_cla = w_cla.T @ sigma @ w_cla
-
-    print(f"Variances: MVO={var_mvo:.8f}, CLA={var_cla:.8f}")
 
     assert res_cla["status"] == "optimal"
     assert np.isclose(var_mvo, var_cla, atol=1e-6)
@@ -70,3 +67,16 @@ def test_cla_frontier():
     cla.solve()
     mu_f, sigma_f, weights_f = cla.efficient_frontier(points=50)
     assert len(mu_f) >= 1
+
+
+def test_cla_non_psd_raises():
+    """CLA must raise ValueError when given a non-PSD covariance matrix."""
+    n = 3
+    mu = np.array([0.01, 0.02, 0.015])
+    # Construct a definitly-negative definite matrix
+    bad_cov = -np.eye(n)
+    lb = np.zeros(n)
+    ub = np.ones(n)
+
+    with pytest.raises(ValueError, match="not positive semi-definite"):
+        CLA(mu, bad_cov, lb, ub)

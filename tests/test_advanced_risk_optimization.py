@@ -1,9 +1,8 @@
 import numpy as np
 import pandas as pd
-import pytest
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
-from pyfolioanalytics.risk import RLDaR, owa_l_moment_crm_weights, owa_risk
+from pyfolioanalytics.risk import RLDaR
 
 def test_rldar_optimization_smoke():
     np.random.seed(42)

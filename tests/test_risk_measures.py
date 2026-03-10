@@ -1,5 +1,3 @@
-import pytest
-import pandas as pd
 import numpy as np
 from pyfolioanalytics.risk import (
     VaR,
@@ -9,15 +7,10 @@ from pyfolioanalytics.risk import (
     average_drawdown,
     CDaR,
     calculate_drawdowns,
+    risk_contribution,
 )
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.random_portfolios import random_portfolios
-
-
-@pytest.fixture
-def stocks_data():
-    df = pd.read_csv("data/stock_returns.csv", index_col=0, parse_dates=True)
-    return df
 
 
 def test_drawdowns(stocks_data):
@@ -91,3 +84,34 @@ def test_random_portfolios():
     assert rp_t.shape == (50, 3)
     assert np.allclose(rp_t.sum(axis=1), 1.0)
     assert np.all(rp_t >= 0)
+
+
+def test_risk_contribution_zero_variance():
+    """Regression test: risk_contribution must not return NaN/inf for a
+    zero-variance portfolio (e.g. all-zero weights)."""
+    sigma = np.array([[0.04, 0.01], [0.01, 0.09]])
+    w_zero = np.array([0.0, 0.0])
+    rc = risk_contribution(w_zero, sigma)
+    assert np.all(rc == 0.0), "Expected zero risk contributions, got NaN or non-zero"
+    assert not np.any(np.isnan(rc)) and not np.any(np.isinf(rc))
+
+
+def test_evar_monotone_in_p(stocks_data):
+    """EVaR should be weakly increasing in the confidence level p."""
+    weights = np.ones(stocks_data.shape[1]) / stocks_data.shape[1]
+    R = stocks_data.values
+    ps = [0.90, 0.95, 0.99]
+    evars = [EVaR(weights, R, p=p) for p in ps]
+    for a, b in zip(evars, evars[1:]):
+        assert a <= b + 1e-8, f"EVaR not non-decreasing: EVaR({ps[evars.index(a)]}) > EVaR({ps[evars.index(b)]})"
+
+
+def test_es_exceeds_var(stocks_data):
+    """ES >= VaR always holds for any valid confidence level."""
+    weights = np.ones(stocks_data.shape[1]) / stocks_data.shape[1]
+    mu = stocks_data.mean().values
+    sigma = stocks_data.cov().values
+    for p in [0.90, 0.95, 0.99]:
+        var = VaR(weights, mu, sigma, p=p, method="gaussian")
+        es = ES(weights, mu, sigma, p=p, method="gaussian")
+        assert es >= var - 1e-10, f"ES < VaR at p={p}"

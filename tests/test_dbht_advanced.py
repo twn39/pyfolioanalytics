@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pytest
 from pyfolioanalytics.dbht import DBHTs
 from pyfolioanalytics.ml import hrp_optimization
 

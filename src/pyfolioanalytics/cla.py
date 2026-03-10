@@ -22,6 +22,16 @@ class CLA:
         self.ub = upper_bounds.reshape(-1, 1)
         self.n = len(self.mu)
 
+        # Validate that the covariance matrix is positive semi-definite so that
+        # subsequent matrix inversions don't produce garbage results silently.
+        min_eig = float(np.linalg.eigvalsh(cov_matrix).min())
+        if min_eig < -1e-8:
+            raise ValueError(
+                f"CLA: covariance matrix is not positive semi-definite "
+                f"(min eigenvalue = {min_eig:.2e}). "
+                "Check for data issues or apply a PSD correction (e.g. RMT denoising)."
+            )
+
         self.w = []  # solution weights at turning points
         self.ls = []  # lambdas at turning points
         self.g = []  # gammas at turning points
