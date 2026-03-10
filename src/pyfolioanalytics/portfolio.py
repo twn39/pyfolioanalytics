@@ -91,6 +91,20 @@ class Portfolio:
                 constraint.update({"ptc": ptc})
         elif type == "position_limit":
             constraint.update({"max_pos": kwargs.get("max_pos")})
+        elif type == "tracking_error":
+            constraint.update(
+                {
+                    "target": kwargs.get("target", 0.05),
+                    "benchmark": kwargs.get("benchmark"),
+                }
+            )
+        elif type == "active_share":
+            constraint.update(
+                {
+                    "active_share_target": kwargs.get("target", 0.6),
+                    "active_share_benchmark": kwargs.get("benchmark"),
+                }
+            )
         elif type == "robust":
             delta_mu = kwargs.get("delta_mu", 0.0)
             if isinstance(delta_mu, (int, float)):

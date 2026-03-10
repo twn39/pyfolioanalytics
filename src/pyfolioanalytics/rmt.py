@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import Optional, Union, Tuple, Dict, Any
+from typing import Tuple, Dict, Any
 from scipy.optimize import minimize_scalar
 
 def marchenko_pastur_pdf(x: np.ndarray, q: float, sigma2: float = 1.0) -> np.ndarray:
@@ -66,11 +66,11 @@ def denoise_covariance(
     e_max, sigma2 = find_max_eigenvalue(vals, q)
     
     # Identify noise components
-    n_noise = np.sum(vals <= e_max)
+    n_noise = int(np.sum(vals <= e_max))
     if n_noise == 0:
         # Fallback
-        e_max = (1 + np.sqrt(1.0 / q))**2
-        n_noise = np.sum(vals <= e_max)
+        e_max = float((1 + np.sqrt(1.0 / q))**2)
+        n_noise = int(np.sum(vals <= e_max))
         if n_noise == 0:
             return sigma
         

@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import linkage, leaves_list
+from scipy.cluster.hierarchy import linkage, leaves_list, fcluster
 from scipy.spatial.distance import squareform
-from typing import List
+from typing import List, Dict, Any
+from .dbht import DBHTs
 
 
 def get_ivp(cov: np.ndarray) -> np.ndarray:
@@ -50,6 +51,8 @@ def get_recursive_bisection(
             std_l = np.sqrt(v_left)
             std_r = np.sqrt(v_right)
             alpha = 1 - std_l / (std_l + std_r)
+        else:
+            alpha = 0.5
 
         w.loc[left_items] *= alpha
         w.loc[right_items] *= 1 - alpha
@@ -63,11 +66,25 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
     corr = R.corr().values
     cov = R.cov().values
-    dist = np.sqrt(0.5 * (1 - corr))
-    np.fill_diagonal(dist, 0)
-    method = kwargs.get("linkage_method", "single")
-    link = linkage(squareform(dist), method=method)
-    sort_indices = leaves_list(link).tolist()
+    
+    clustering = kwargs.get("clustering", "linkage")
+    
+    if clustering == "DBHT":
+        # S is similarity, D is dissimilarity
+        S = corr + 1.0
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        # T8, Rpm, Adjv, Dpm, Mv, Z = DBHTs(dist, S)
+        # We only need Z for HRP/HERC
+        res = DBHTs(dist, S)
+        Z = res[5]
+    else:
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        method = kwargs.get("linkage_method", "single")
+        Z = linkage(squareform(dist), method=method)
+        
+    sort_indices = leaves_list(Z).tolist()
 
     weights = get_recursive_bisection(cov, sort_indices, method="HRP")
     final_w = pd.Series(0.0, index=asset_names)
@@ -80,11 +97,22 @@ def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
     corr = R.corr().values
     cov = R.cov().values
-    dist = np.sqrt(0.5 * (1 - corr))
-    np.fill_diagonal(dist, 0)
-    method = kwargs.get("linkage_method", "ward")
-    link = linkage(squareform(dist), method=method)
-    sort_indices = leaves_list(link).tolist()
+    
+    clustering = kwargs.get("clustering", "linkage")
+    
+    if clustering == "DBHT":
+        S = corr + 1.0
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        res = DBHTs(dist, S)
+        Z = res[5]
+    else:
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        method = kwargs.get("linkage_method", "ward")
+        Z = linkage(squareform(dist), method=method)
+        
+    sort_indices = leaves_list(Z).tolist()
 
     weights = get_recursive_bisection(cov, sort_indices, method="HERC")
     final_w = pd.Series(0.0, index=asset_names)
@@ -98,17 +126,22 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
 
     asset_names = R.columns.tolist()
     corr = R.corr().values
+    clustering = kwargs.get("clustering", "linkage")
 
-    # 1. Clustering
-    dist = np.sqrt(0.5 * (1 - corr))
-    np.fill_diagonal(dist, 0)
-    method = kwargs.get("linkage_method", "ward")
-    link = linkage(squareform(dist), method=method)
-
-    from scipy.cluster.hierarchy import fcluster
-
-    max_clusters = kwargs.get("max_clusters", 3)
-    clusters = fcluster(link, max_clusters, criterion="maxclust")
+    if clustering == "DBHT":
+        S = corr + 1.0
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        res = DBHTs(dist, S)
+        # T8 is the cluster membership vector
+        clusters = res[0].flatten() + 1 # Convert to 1-indexed for consistency
+    else:
+        dist = np.sqrt(0.5 * (1 - corr))
+        np.fill_diagonal(dist, 0)
+        method = kwargs.get("linkage_method", "ward")
+        link = linkage(squareform(dist), method=method)
+        max_clusters = kwargs.get("max_clusters", 3)
+        clusters = fcluster(link, max_clusters, criterion="maxclust")
 
     cluster_ids = np.unique(clusters)
     w_intra = pd.Series(0.0, index=asset_names)
@@ -135,7 +168,6 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
             w_intra[c_assets] = res["weights"]
 
     # 3. Inter-cluster optimization
-    # Reduced returns matrix
     R_inter = pd.DataFrame(index=R.index)
     for cid in cluster_ids:
         c_assets = [asset_names[i] for i, v in enumerate(clusters) if v == cid]

@@ -1,6 +1,4 @@
-import pytest
 import numpy as np
-import pandas as pd
 from pyfolioanalytics.rmt import denoise_covariance
 
 def test_marchenko_pastur_denoising():

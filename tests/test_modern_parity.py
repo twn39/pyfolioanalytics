@@ -1,4 +1,3 @@
-import pytest
 import numpy as np
 import pandas as pd
 import json
@@ -64,7 +63,7 @@ def test_socp_robust_parity_manual():
     obj = cp.Minimize(0.5 * 1.0 * risk - ret_robust)
     
     cons = [cp.sum(w) == 1.0, w >= 0]
-    prob = cp.Problem(obj, cons)
+    cp.Problem(obj, cons)
     # Use exact same solver moments for manual check
     # But optimize_portfolio re-calculates moments from R
     # So we need to overwrite the R-based moments in our comparison
@@ -83,7 +82,7 @@ def test_socp_robust_parity_manual():
     w_manual = w.value
     
     # Verify parity
-    np.testing.assert_allclose(w_py, w_manual, atol=1e-6)
+    np.testing.assert_allclose(np.array(w_py), np.array(w_manual), atol=1e-6)
 
 def test_socp_covariance_parity_manual():
     # White-box validation of Ellipsoidal Covariance Uncertainty formulation
@@ -92,8 +91,8 @@ def test_socp_covariance_parity_manual():
     
     np.random.seed(42)
     n = 3
-    mu = np.array([0.01, 0.02, 0.015])
-    sigma = np.diag([0.05, 0.08, 0.06])**2
+    np.array([0.01, 0.02, 0.015])
+    np.diag([0.05, 0.08, 0.06])**2
     # Uncertainty of vec(Sigma) - small for stability
     sigma_sigma = np.diag([1e-6] * (n**2))
     k_sigma = 0.5
@@ -142,4 +141,4 @@ def test_socp_covariance_parity_manual():
     
     # Verify parity
     # Using 1e-3 tolerance as solvers (CLARABEL vs SCS) might have different precision defaults
-    np.testing.assert_allclose(w_py, w_manual, atol=1e-3)
+    np.testing.assert_allclose(np.array(w_py), np.array(w_manual), atol=1e-3)

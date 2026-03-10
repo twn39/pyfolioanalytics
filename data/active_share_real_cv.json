@@ -1,0 +1,25 @@
+{
+    "asset_names": [
+        "Convertible Arbitrage",
+        "CTA Global",
+        "Distressed Securities",
+        "Emerging Markets",
+        "Equity Market Neutral"
+    ],
+    "w_b": [
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2
+    ],
+    "as_target": 0.1,
+    "w_optimal": [
+        0.20000001410945697,
+        0.10000014255456671,
+        0.2999997675335079,
+        0.2000000821133567,
+        0.19999999368911173
+    ],
+    "obj_value": 0.0068113165017398315
+}

@@ -1,5 +1,6 @@
 import cvxpy as cp
 import numpy as np
+import pandas as pd
 from typing import Dict, Any, List
 from scipy.optimize import minimize, differential_evolution
 
@@ -79,6 +80,37 @@ def solve_mvo(
                 cp_constraints.append(cp.sum(w[indices]) >= group_min[i])
             if group_max is not None:
                 cp_constraints.append(cp.sum(w[indices]) <= group_max[i])
+
+    # Tracking Error Constraint
+    te_target = constraints.get("target")
+    te_benchmark = constraints.get("benchmark")
+    if te_target is not None and te_benchmark is not None:
+        # TE = sqrt((w - w_b)' * Sigma * (w - w_b)) <= target
+        # For convex optimization, we use (w - w_b)' * Sigma * (w - w_b) <= target^2
+        w_b = te_benchmark
+        if isinstance(w_b, dict):
+            w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
+        elif isinstance(w_b, pd.Series):
+            w_b = w_b.reindex(asset_names, fill_value=0.0).values
+        
+        diff = w - w_b
+        # We can use quad_form or norm if we take Cholesky
+        # PortfolioAnalytics usually treats target as StdDev target
+        cp_constraints.append(cp.quad_form(diff, sigma) <= te_target**2)
+
+    # Active Share Constraint
+    as_target = constraints.get("active_share_target")
+    as_benchmark = constraints.get("active_share_benchmark")
+    if as_target is not None and as_benchmark is not None:
+        # AS = 0.5 * sum(|w - w_b|) <= target
+        w_b = as_benchmark
+        if isinstance(w_b, dict):
+            w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
+        elif isinstance(w_b, pd.Series):
+            w_b = w_b.reindex(asset_names, fill_value=0.0).values
+        
+        # AS constraint
+        cp_constraints.append(0.5 * cp.norm(w - w_b, 1) <= as_target)
 
     # Turnover/TC
     w_init = constraints.get("weight_initial")
@@ -447,14 +479,15 @@ def solve_owa(
     owa_weights = owa_obj_config.get("arguments", {}).get("owa_weights")
     if owa_weights is None:
         from .risk import owa_gmd_weights
-
         owa_weights = owa_gmd_weights(T)
 
+    # Sort weights descending for convex risk measure (Standard for sorted losses)
     if np.any(np.diff(owa_weights) > 1e-12):
         owa_weights = np.sort(owa_weights)[::-1]
 
     delta_w = owa_weights[:-1] - owa_weights[1:]
 
+    # Linear programming formulation for OWA
     if T > 1:
         zeta = cp.Variable(T - 1)
         d = cp.Variable((T, T - 1), nonneg=True)
@@ -480,6 +513,212 @@ def solve_owa(
         return {"status": prob.status, "weights": None}
 
     return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+
+def solve_edar(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    T, n = R.shape
+    w = cp.Variable(n)
+    alpha_p = next(
+        (o.get("arguments", {}).get("p", 0.95) for o in objectives if o["name"] == "EDaR"),
+        0.95,
+    )
+    alpha = 1 - alpha_p
+
+    # Drawdown constraints
+    u = cp.Variable(T + 1)
+    cum_ret = cp.Variable(T + 1)
+    d = cp.Variable(T)
+    
+    cp_constraints = []
+    # Portfolio constraints (sum, bounds)
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+
+    cp_constraints.append(cum_ret[0] == 0)
+    cp_constraints.append(u[0] == 0)
+    for t in range(T):
+        cp_constraints.append(cum_ret[t+1] == cum_ret[t] + R[t] @ w)
+        cp_constraints.append(u[t+1] >= cum_ret[t+1])
+        cp_constraints.append(u[t+1] >= u[t])
+        cp_constraints.append(d[t] == u[t+1] - cum_ret[t+1])
+
+    # EVaR applied to d (DCP compliant exponential cone formulation)
+    t_evar = cp.Variable()
+    z_evar = cp.Variable(nonneg=True)
+    ui = cp.Variable(T)
+    
+    # Minimize t + z * log(sum(exp((di - t)/z))/(T*alpha))
+    # This is equivalent to minimizing t subject to:
+    # sum(exp((di - t)/z)) <= T * alpha
+    # which is sum(ui) <= T * alpha where ExpCone(di - t, z, ui)
+    
+    cp_constraints.append(cp.sum(ui) <= T * alpha * z_evar)
+    for i in range(T):
+        cp_constraints.append(cp.ExpCone(d[i] - t_evar, z_evar, ui[i]))
+
+    prob = cp.Problem(cp.Minimize(t_evar), cp_constraints)
+    try:
+        prob.solve(verbose=False)
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+
+def solve_rlvar(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    T, n = R.shape
+    w = cp.Variable(n)
+    obj_config = next((o for o in objectives if o["name"] == "RLVaR"), {})
+    alpha_p = obj_config.get("arguments", {}).get("p", 0.95)
+    kappa = obj_config.get("arguments", {}).get("kappa", 0.3)
+    alpha = 1 - alpha_p
+
+    cp_constraints = []
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+
+    # RLVaR primal formulation
+    t = cp.Variable()
+    z = cp.Variable(nonneg=True)
+    psi = cp.Variable(T)
+    theta = cp.Variable(T)
+    epsilon = cp.Variable(T)
+    omega = cp.Variable(T)
+    
+    # Scale returns to improve stability
+    scale = 100.0
+    losses = -(R * scale) @ w
+    
+    ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
+    
+    cp_constraints.append(losses - t + epsilon + omega <= 0)
+    
+    # Correct 3D Power Cone application
+    x1 = cp.vstack([z * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
+    y1 = psi * (1 + kappa) / kappa
+    cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
+    
+    x2 = omega / (1 - kappa)
+    y2 = theta / kappa
+    z2 = cp.vstack([-z / (2 * kappa)] * T).flatten(order="C")
+    cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
+    
+    obj = t + z * ln_k + cp.sum(psi + theta)
+    prob = cp.Problem(cp.Minimize(obj), cp_constraints)
+    
+    # Try different solvers
+    try:
+        prob.solve(solver=cp.SCS, verbose=False, eps=1e-5)
+    except:
+        try:
+            prob.solve(solver=cp.CLARABEL, verbose=False)
+        except:
+            prob.solve()
+
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
+
+
+def solve_rldar(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    T, n = R.shape
+    w = cp.Variable(n)
+    obj_config = next((o for o in objectives if o["name"] == "RLDaR"), {})
+    alpha_p = obj_config.get("arguments", {}).get("p", 0.95)
+    kappa = obj_config.get("arguments", {}).get("kappa", 0.3)
+    alpha = 1 - alpha_p
+
+    # Scale returns to improve stability
+    scale = 100.0
+    
+    cp_constraints = []
+    # Portfolio constraints
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+
+    # Drawdown tracking
+    u = cp.Variable(T + 1)
+    cum_ret = cp.Variable(T + 1)
+    d = cp.Variable(T)
+    cp_constraints.append(cum_ret[0] == 0)
+    cp_constraints.append(u[0] == 0)
+    for t in range(T):
+        cp_constraints.append(cum_ret[t+1] == cum_ret[t] + (R[t] * scale) @ w)
+        cp_constraints.append(u[t+1] >= cum_ret[t+1])
+        cp_constraints.append(u[t+1] >= u[t])
+        cp_constraints.append(d[t] == u[t+1] - cum_ret[t+1])
+
+    # RLVaR primal formulation applied to d
+    t_rlvar = cp.Variable()
+    z_rlvar = cp.Variable(nonneg=True)
+    psi = cp.Variable(T)
+    theta = cp.Variable(T)
+    epsilon = cp.Variable(T)
+    omega = cp.Variable(T)
+    
+    ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
+    cp_constraints.append(d - t_rlvar + epsilon + omega <= 0)
+    
+    x1 = cp.vstack([z_rlvar * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
+    y1 = psi * (1 + kappa) / kappa
+    cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
+    
+    x2 = omega / (1 - kappa)
+    y2 = theta / kappa
+    z2 = cp.vstack([-z_rlvar / (2 * kappa)] * T).flatten(order="C")
+    cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
+    
+    obj = t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)
+    prob = cp.Problem(cp.Minimize(obj), cp_constraints)
+    
+    try:
+        prob.solve(solver=cp.SCS, eps=1e-5)
+    except:
+        try:
+            prob.solve(solver=cp.CLARABEL)
+        except:
+            prob.solve()
+
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
+
+
+def solve_portfolio_cvxpy(
+    R: np.ndarray,
+    moments: Dict[str, Any],
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Standard MVO solver using CVXPY.
+    """
+    # Reuse solve_mvo logic
+    return solve_mvo(moments, constraints, objectives, **kwargs)
 
 
 def solve_noc(
