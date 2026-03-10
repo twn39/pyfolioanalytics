@@ -96,12 +96,142 @@ def average_drawdown(weights: np.ndarray, R: np.ndarray) -> float:
 
 
 def risk_contribution(weights: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+    """
+    Component Contribution to Risk (CCR) for portfolio standard deviation.
+    Sum(risk_contribution) == StdDev(portfolio).
+    """
     p_var = float(weights.T @ sigma @ weights)
-    # Guard against zero-variance portfolios (e.g. degenerate weights)
     if p_var < 1e-14:
         return np.zeros_like(weights)
-    marginal_contribution = (sigma @ weights) / np.sqrt(p_var)
+    p_sd = np.sqrt(p_var)
+    marginal_contribution = (sigma @ weights) / p_sd
     return weights * marginal_contribution
+
+
+def risk_decomposition(
+    weights: np.ndarray, 
+    sigma: np.ndarray, 
+    type: str = "StdDev"
+) -> dict:
+    """
+    Comprehensive risk decomposition.
+    
+    Parameters
+    ----------
+    weights : np.ndarray
+        Portfolio weights.
+    sigma : np.ndarray
+        Covariance matrix.
+    type : str
+        'StdDev' (default) or 'var'.
+        
+    Returns
+    -------
+    dict
+        {
+            'total': Total risk (sd or var),
+            'mcr': Marginal Contribution to Risk,
+            'ccr': Component Contribution to Risk,
+            'pcr': Percentage Contribution to Risk
+        }
+    """
+    weights = weights.flatten()
+    p_var = float(weights.T @ sigma @ weights)
+    
+    if type == "StdDev":
+        total_risk = np.sqrt(p_var)
+        if total_risk < 1e-14:
+            mcr = np.zeros_like(weights)
+            ccr = np.zeros_like(weights)
+            pcr = np.zeros_like(weights)
+        else:
+            mcr = (sigma @ weights) / total_risk
+            ccr = weights * mcr
+            pcr = ccr / total_risk
+    elif type == "var":
+        total_risk = p_var
+        mcr = 2 * (sigma @ weights)
+        ccr = weights * (sigma @ weights) # In PA, CCR for var is often w_i * (Sigma*w)_i
+        if p_var < 1e-14:
+            pcr = np.zeros_like(weights)
+        else:
+            pcr = ccr / p_var
+    else:
+        raise ValueError("Type must be 'StdDev' or 'var'")
+        
+    return {
+        "total": total_risk,
+        "mcr": mcr,
+        "ccr": ccr,
+        "pcr": pcr
+    }
+
+
+def factor_risk_decomposition(
+    weights: np.ndarray,
+    B: np.ndarray,
+    sigma_f: np.ndarray,
+    residual_sigma: Optional[np.ndarray] = None,
+    type: str = "StdDev",
+) -> dict:
+    """
+    Factor risk decomposition (Attribution).
+
+    Parameters
+    ----------
+    weights : np.ndarray
+        Portfolio weights (N,).
+    B : np.ndarray
+        Factor loading matrix (N, K).
+    sigma_f : np.ndarray
+        Factor covariance matrix (K, K).
+    residual_sigma : np.ndarray, optional
+        Residual (idiosyncratic) covariance matrix (N, N). Usually diagonal.
+    """
+    weights = weights.flatten()
+    # Total systematic covariance: B @ sigma_f @ B.T
+    sigma_sys = B @ sigma_f @ B.T
+
+    if residual_sigma is not None:
+        sigma_total = sigma_sys + residual_sigma
+    else:
+        sigma_total = sigma_sys
+
+    # Asset level decomposition first
+    asset_decomp = risk_decomposition(weights, sigma_total, type=type)
+
+    # Factor level decomposition
+    # Exposure e = B.T @ w (K,)
+    exposure = B.T @ weights
+
+    if type == "StdDev":
+        total_risk = asset_decomp["total"]
+        if total_risk < 1e-14:
+            mcr_f = np.zeros_like(exposure)
+            ccr_f = np.zeros_like(exposure)
+        else:
+            # MCR_f = (sigma_f @ exposure) / total_risk
+            mcr_f = (sigma_f @ exposure) / total_risk
+            ccr_f = exposure * mcr_f
+    else:  # var
+        total_risk = asset_decomp["total"]
+        mcr_f = 2 * (sigma_f @ exposure)
+        ccr_f = exposure * (sigma_f @ exposure)
+
+    # Calculate Residual Contribution
+    ccr_resid = total_risk - np.sum(ccr_f)
+
+    return {
+        "total": total_risk,
+        "exposure": exposure,
+        "mcr_factor": mcr_f,
+        "ccr_factor": ccr_f,
+        "pcr_factor": ccr_f / total_risk if total_risk > 1e-14 else np.zeros_like(ccr_f),
+        "ccr_residual": ccr_resid,
+        "pcr_residual": ccr_resid / total_risk
+        if total_risk > 1e-14
+        else 0.0,
+    }
 
 
 def _solve_evar_scalar(losses: np.ndarray, alpha: float) -> float:
