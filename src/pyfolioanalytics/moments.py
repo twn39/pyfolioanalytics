@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .factors import statistical_factor_model, factor_model_covariance, ac_ranking
 
 
@@ -143,6 +143,71 @@ def shrink_comoments(M_sample: np.ndarray, M_target: np.ndarray, alpha: float = 
     return (1 - alpha) * M_sample + alpha * M_target
 
 
+def ccc_garch_moments(R: np.ndarray, mu: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    """
+    Constant Conditional Correlation (CCC) GARCH Moment Model.
+    Equivalent to PortfolioAnalytics::CCCgarch.MM.
+    """
+    from arch import arch_model
+    import warnings
+
+    T, N = R.shape
+    if mu is None:
+        mu = np.mean(R, axis=0)
+    
+    R_centered = R - mu
+    S = np.zeros((T, N))
+    nextS = np.zeros(N)
+    
+    for i in range(N):
+        # Scale returns by 100 for stability (arch library recommendation)
+        scale_factor = 100.0
+        y = R_centered[:, i] * scale_factor
+        
+        # Fit GARCH(1,1)
+        model = arch_model(y, vol='Garch', p=1, q=1, mean='Zero', dist='Normal')
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            res = model.fit(disp='off', show_warning=False)
+        
+        # alpha1 check (on scaled parameters)
+        alpha1 = res.params.get('alpha[1]', 0.0)
+        
+        if alpha1 < 0.01:
+            sigmat_scaled = np.full(T, np.std(y))
+            nextSt_scaled = np.std(y)
+        else:
+            sigmat_scaled = res.conditional_volatility
+            forecast = res.forecast(horizon=1)
+            nextSt_scaled = np.sqrt(forecast.variance.values[-1, 0])
+            
+        # De-scale results
+        S[:, i] = sigmat_scaled / scale_factor
+        nextS[i] = nextSt_scaled / scale_factor
+        
+    # Standardized residuals
+    U = R_centered / S
+    
+    # Constant Correlation Matrix
+    Rcor = np.corrcoef(U, rowvar=False)
+    
+    # Conditional Covariance Matrix for next period
+    D = np.diag(nextS)
+    sigma = D @ Rcor @ D
+    
+    # Rescale U for higher order moments matching R
+    # uncS = sqrt(diag(cov(U)))
+    uncS = np.std(U, axis=0)
+    U_rescaled = U * (nextS / uncS)
+    
+    return {
+        "mu": mu.reshape(-1, 1),
+        "sigma": sigma,
+        "m3": M3_MM(U_rescaled),
+        "m4": M4_MM(U_rescaled)
+    }
+
+
 def set_portfolio_moments(
     R: pd.DataFrame, portfolio: Any, method: str = "sample", **kwargs
 ) -> Dict[str, Any]:
@@ -219,6 +284,8 @@ def set_portfolio_moments(
         )
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
         moments["sigma"] = denoised_sigma
+    elif method == "garch":
+        moments = ccc_garch_moments(R_filtered.values)
     else:
         raise NotImplementedError(f"Method '{method}' is not implemented.")
 
