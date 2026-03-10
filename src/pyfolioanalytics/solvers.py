@@ -62,6 +62,11 @@ def solve_mvo(
         cp_constraints.append(B.T @ w >= lower)
         cp_constraints.append(B.T @ w <= upper)
 
+    # Leverage Exposure Constraint
+    leverage_limit = constraints.get("leverage")
+    if leverage_limit is not None:
+        cp_constraints.append(cp.norm(w, 1) <= leverage_limit)
+
     # Return Constraint
     min_return = constraints.get("min_return")
     if min_return is not None:

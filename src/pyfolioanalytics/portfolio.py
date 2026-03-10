@@ -132,6 +132,11 @@ class Portfolio:
                 "lower": np.array(lower),
                 "upper": np.array(upper)
             })
+        elif type == "leverage_exposure":
+            leverage = kwargs.get("leverage")
+            if leverage is None:
+                raise ValueError("leverage_exposure constraint requires 'leverage' parameter.")
+            constraint.update({"leverage": float(leverage)})
         elif type == "robust":
             delta_mu = kwargs.get("delta_mu", 0.0)
             if isinstance(delta_mu, (int, float)):
