@@ -4,115 +4,76 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Validation](https://img.shields.io/badge/Validation-R%20Parity%20Check-orange.svg)](tests/)
 
-**PyFolioAnalytics** 是 R 语言顶级组合优化库 [PortfolioAnalytics](https://github.com/braverock/PortfolioAnalytics) 的高保真 Python 实现。本项目旨在为量化研究员提供一个模块化、可扩展且数学精确的框架，用于现代资产配置、风险归因和回测验证。
+**PyFolioAnalytics** 是 R 语言顶级组合优化库 [PortfolioAnalytics](https://github.com/braverock/PortfolioAnalytics) 的高保真 Python 实现。本项目不仅完美复刻了 R 语言的声明式定义和优化逻辑，还整合了 `Riskfolio-Lib` 和 `PyPortfolioOpt` 中的现代量化特性，通过严苛的 $10^{-7}$ 精度交叉验证，为量化研究提供生产级的数学保障。
 
 ---
 
-## 📖 核心功能深度解析
+## 🛠 全功能概览
 
-### 1. 灵活的投资组合规格 (Portfolio Specification)
-我们复刻了 R 语言中“声明式”的组合定义方式，支持多种复杂的实务约束。
+### 1. 组合规格与复杂约束 (Portfolio Specification)
+复刻了 R 语言 `portfolio.spec` 的核心逻辑，支持高度灵活的约束组合：
+-   **资产分配约束**: `box` (权重上下限), `group` (组约束), `position_limit` (最大持仓数)。
+-   **预算与杠杆**: `full_investment` (权重和为1), `dollar_neutral` (多空对冲), `leverage_exposure` (毛杠杆限制，支持 130/30)。
+-   **因子与风险**: 
+    -   `factor_exposure`: 限制风格/宏观因子的 Beta 暴露。
+    -   `tracking_error`: 限制相对于基准的跟踪误差。
+    -   `active_share`: 强制组合与基准的主动管理差异。
+    -   `diversification (HHI)`: 通过权重平方和限制实现多样化。
+-   **交易控制**: `turnover` (换手率限制), `transaction_cost` (基于百分比的交易成本)。
 
-*   **基础约束**: `box` (上下限), `group` (行业/板块分组), `full_investment` (权重和为1), `dollar_neutral` (多空对冲)。
-*   **因子暴露约束 (Factor Exposure)**: 
-    *   直接限制组合在指定因子（如 Market, Value, Growth）上的 Beta 加权暴露。
-    *   公式: $lower \le B^T w \le upper$。
-*   **杠杆暴露约束 (Leverage Exposure)**: 
-    *   控制组合的“毛杠杆”（Gross Leverage），支持 130/30 等策略。
-    *   公式: $\sum |w_i| \le leverage\_limit$。
-*   **多样化约束 (HHI)**: 
-    *   利用赫芬达尔-赫希曼指数（HHI）防止权重过度集中。
-    *   公式: $1 - \sum w_i^2 \ge div\_target$。
-*   **交易成本与换手率**: 支持设置单边交易成本 `ptc` 和回测中的 `turnover_target`。
+### 2. 统计矩估计 (Statistical Moments)
+提供多样化的均值、协方差及高阶矩估计技术，用于降低估计误差：
+-   **动态波动率**: `CCC-GARCH` (单变量 GARCH + 常相关) 矩估计。
+-   **主观观点整合**: `Meucci Entropy Pooling` (支持解析梯度) 与 `Black-Litterman`。
+-   **稳健估计**: `MinCovDet` (鲁棒协方差), `Ledoit-Wolf` (收缩估计)。
+-   **随机矩阵理论 (RMT)**: 特征值去噪（Fixed, Spectral, Shrink 方法）。
+-   **高阶矩**: 样本及统计因子模型（SFM）生成的 **共偏度 (M3)** 和 **共峰度 (M4)** 矩阵。
 
-### 2. 高级矩估计 (Statistical Moment Estimation)
-矩估计是组合优化的灵魂。本项目提供了多种先进技术来降低估计误差（Estimation Error）。
+### 3. 风险度量与归因 (Risk Analysis)
+涵盖从经典波动率到前沿稳健度量的全方位分析：
+-   **经典与修正风险**: Gaussian/Modified (Cornish-Fisher) VaR 和 ES (CVaR)。
+-   **回撤风险**: `CDaR` (条件回撤), `EDaR` (熵回撤), `MaxDrawdown`。
+-   **现代稳健度量**: `EVaR` (熵 VaR), `RLVaR/RLDaR` (基于稳健线性规划的 VaR/DaR)。
+-   **排序加权 (OWA)**: 支持 GMD、L-Moments 权重、CRM 权重等 OWA 风险度量。
+-   **风险归因**: 资产级与因子级的 **MCR** (边际), **CCR** (成分), **PCR** (百分比) 贡献分解。
 
-*   **CCC-GARCH 动态波动率**:
-    *   利用单变量 GARCH(1,1) 模型预测时变的条件波动率，配合常相关性矩阵（CCC）构造下一期的协方差矩阵。
-    *   适用于波动率聚集（Volatility Clustering）明显的金融市场。
-*   **Meucci 熵池法 (Entropy Pooling)**:
-    *   允许以非参数方式将主观观点（View）整合进先验分布。
-    *   支持解析梯度加速优化，能够处理包含数千个场景的复杂观点。
-*   **鲁棒协方差 (Robust Covariance)**:
-    *   集成 `MinCovDet` (MCD) 和 `Ledoit-Wolf` 收缩估计，处理金融数据中的离群值。
-*   **随机矩阵理论 (RMT) 去噪**:
-    *   通过 Marchenko-Pastur 分布过滤协方差矩阵中的噪声特征值，提取真实的结构性相关性。
+### 4. 优化算法与引擎 (Optimization)
+集成多种求解器，适配线性、二次及非凸优化：
+-   **凸优化集成**: 基于 **CVXPY** 的 MVO, SOCP, MILP 求解。
+-   **风险平价**: `ERC` (等风险贡献) 的非线性精确求解。
+-   **有效前沿**: **CLA** (关键线算法) 实现带约束的精确前沿描绘。
+-   **机器学习优化**: 
+    -   `HRP` (分层风险平价), `HERC` (分层等风险贡献), `NCO` (嵌套聚类优化)。
+    -   支持 **DBHT** (有向气泡层次树) 聚类算法。
+-   **离散化分配**: 支持将百分比权重转换为实际股票股数的离散分配算法。
 
-### 3. 多样化的优化引擎
-*   **凸优化 (CVXPY)**: 核心引擎，支持均值-方差（MVO）、二阶锥规划（SOCP）和混合整数规划（MILP）。
-*   **风险平价 (Risk Parity)**: 
-    *   **ERC**: 支持非线性求解器精确实现等风险贡献。
-    *   **HRP/HERC**: 基于分层聚类（Hierarchical Clustering）的稳健分配，无需协方差矩阵求逆。
-*   **Critical Line Algorithm (CLA)**: 专门用于精确描绘包含禁止做空约束的均值-方差有效前沿。
-
-### 4. 风险度量与归因 (Risk Attribution)
-*   **尾部风险**: 除了波动率，还支持 CVaR (ES)、Modified VaR、CDaR (最大回撤风险) 和 EVaR (熵风险)。
-*   **风险分解**: 
-    *   **资产级**: 提供边际风险贡献 (MCR)、成分风险贡献 (CCR) 和百分比贡献 (PCR)。
-    *   **因子级**: 将总风险归因为系统性因子贡献和特质性残余贡献。
+### 5. 架构与实务功能
+-   **回测引擎**: 支持滚动窗口（Rolling）和扩张窗口（Expanding）的自动化调仓测试。
+-   **层次化结构**: 支持 **Regime Switching** (状态切换) 组合和多层级嵌套组合。
+-   **随机组合**: 支持基于 Simplex 变换的随机组合生成，用于非凸空间探索。
 
 ---
 
 ## 🔬 数学保真度与交叉验证
 
-我们坚持“结果必须与 R 完全一致”的原则。
-
-*   **基准数据集**: 所有的算法均在 `edhec`（对冲基金策略指数）和真实 A 股/美股数据上进行了验证。
-*   **自动化测试**: `tests/` 目录包含超过 100 个交叉验证用例。我们通过运行 R 脚本生成 JSON 基准数据，并在 Python 中进行 $10^{-7}$ 精度的断言。
-*   **透明性**: 项目内置 `scripts/` 目录，您可以随时运行 `generate_*.R` 脚本来复现 R 语言的原始计算过程。
-
----
-
-## 🛠 快速上手
-
-### 安装
-推荐使用现代 Python 包管理器 `uv`：
-```bash
-uv sync
-```
-
-### 示例：带因子约束的 GARCH 优化
-```python
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.optimize import optimize_portfolio
-import numpy as np
-import pandas as pd
-
-# 1. 准备数据
-R = pd.read_csv("data/edhec.csv", index_col=0)
-B = np.random.rand(R.shape[1], 2) # 假设的因子加载矩阵
-
-# 2. 构建组合规格
-p = Portfolio(assets=R.columns)
-p.add_constraint(type="full_investment")
-p.add_constraint(type="factor_exposure", B=B, lower=[0.2, 0.1], upper=[0.5, 0.4])
-p.add_constraint(type="HHI", hhi_target=0.15)
-
-# 3. 执行优化 (使用 GARCH 矩估计)
-res = optimize_portfolio(R, p, moment_method="garch")
-
-# 4. 风险分解
-from pyfolioanalytics.risk import risk_decomposition
-decomp = risk_decomposition(res['weights'], res['moments']['sigma'])
-print(f"资产百分比风险贡献: {decomp['pcr']}")
-```
+本项目每一项核心算法均通过了与 R 语言 `PortfolioAnalytics` 原生库的对比验证：
+-   **验证数据集**: 包含 `edhec` 策略数据及 2020-2026 年真实股票数据。
+-   **自动化断言**: 在 `tests/` 下有超过 100 个测试用例，确保 Python 与 R 的计算结果在 `1e-7` 精度下一致。
+-   **透明逻辑**: 所有基准生成的 R 脚本均保留在 `scripts/` 目录，供用户复现。
 
 ---
 
 ## 📂 项目结构
-```text
-pyfolioanalytics/
-├── data/           # 交叉验证基准 (JSON) 与真实数据集 (CSV)
-├── scripts/        # 地面真理 (Ground Truth) 生成脚本 (R/Python/Julia)
-├── src/            # 核心库源码
-│   ├── moments.py  # 矩估计 (GARCH, 收缩, RMT)
-│   ├── portfolio.py# 组合定义与约束系统
-│   ├── risk.py     # 风险度量与归因
-│   └── solvers.py  # 优化求解器集成
-├── tests/          # 完整的回归测试套件
-└── third_party/    # 参考库源码 (不提交，仅供开发对照)
-```
+-   `src/pyfolioanalytics/`:
+    -   `moments.py`: 所有矩估计逻辑（GARCH, RMT, Shrinkage）。
+    -   `risk.py`: 风险度量（VaR, ES, OWA, RLVaR）与归因分解。
+    -   `meucci.py`: 熵池法与排名算法。
+    -   `ml.py` & `dbht.py`: HRP, HERC, NCO 与 DBHT 聚类。
+    -   `portfolio.py`: 组合规格定义与约束管理。
+    -   `backtest.py`: 调仓回测引擎。
+    -   `solvers.py`: CVXPY, SciPy, CLA 求解器接口。
+-   `scripts/`: 地面真理 (Ground Truth) 生成脚本。
+-   `data/`: 交叉验证 JSON 基准与数据集。
 
 ---
-*量化投资，始于精确。*
+*量化研究的精准桥梁。*
