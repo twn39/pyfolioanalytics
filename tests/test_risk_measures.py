@@ -103,7 +103,9 @@ def test_evar_monotone_in_p(stocks_data):
     ps = [0.90, 0.95, 0.99]
     evars = [EVaR(weights, R, p=p) for p in ps]
     for a, b in zip(evars, evars[1:]):
-        assert a <= b + 1e-8, f"EVaR not non-decreasing: EVaR({ps[evars.index(a)]}) > EVaR({ps[evars.index(b)]})"
+        assert a <= b + 1e-8, (
+            f"EVaR not non-decreasing: EVaR({ps[evars.index(a)]}) > EVaR({ps[evars.index(b)]})"
+        )
 
 
 def test_es_exceeds_var(stocks_data):

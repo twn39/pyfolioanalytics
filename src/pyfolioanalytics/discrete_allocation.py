@@ -1,4 +1,3 @@
-
 import cvxpy as cp
 import numpy as np
 import pandas as pd
@@ -71,10 +70,18 @@ class DiscreteAllocation:
             if reinvest:
                 long_val += short_val
 
-            da_long = DiscreteAllocation(longs, self.latest_prices[list(longs.keys())], total_portfolio_value=long_val)
+            da_long = DiscreteAllocation(
+                longs,
+                self.latest_prices[list(longs.keys())],
+                total_portfolio_value=long_val,
+            )
             long_alloc, long_leftover = da_long.greedy_portfolio()
 
-            da_short = DiscreteAllocation(shorts, self.latest_prices[list(shorts.keys())], total_portfolio_value=short_val)
+            da_short = DiscreteAllocation(
+                shorts,
+                self.latest_prices[list(shorts.keys())],
+                total_portfolio_value=short_val,
+            )
             short_alloc, short_leftover = da_short.greedy_portfolio()
             short_alloc = {t: -v for t, v in short_alloc.items()}
 
@@ -123,7 +130,11 @@ class DiscreteAllocation:
                 found = False
                 # Sort remaining by deficit
                 if current_total > 0:
-                    deficit = ideal_weights - (np.array(buy_prices) * np.array(shares_bought)) / current_total
+                    deficit = (
+                        ideal_weights
+                        - (np.array(buy_prices) * np.array(shares_bought))
+                        / current_total
+                    )
                     sort_idx = np.argsort(deficit)[::-1]
                     for i in sort_idx:
                         if buy_prices[i] <= available_funds:
@@ -141,7 +152,9 @@ class DiscreteAllocation:
         self.allocation = self._remove_zero_positions(dict(zip(tickers, shares_bought)))
         return self.allocation, available_funds
 
-    def lp_portfolio(self, reinvest: bool = False, solver: str | None = None) -> tuple[dict[str, int], float]:
+    def lp_portfolio(
+        self, reinvest: bool = False, solver: str | None = None
+    ) -> tuple[dict[str, int], float]:
         """
         Convert continuous weights into a discrete portfolio allocation
         using integer programming.
@@ -161,10 +174,18 @@ class DiscreteAllocation:
             if reinvest:
                 long_val += short_val
 
-            da_long = DiscreteAllocation(longs, self.latest_prices[list(longs.keys())], total_portfolio_value=long_val)
+            da_long = DiscreteAllocation(
+                longs,
+                self.latest_prices[list(longs.keys())],
+                total_portfolio_value=long_val,
+            )
             long_alloc, long_leftover = da_long.lp_portfolio(solver=solver)
 
-            da_short = DiscreteAllocation(shorts, self.latest_prices[list(shorts.keys())], total_portfolio_value=short_val)
+            da_short = DiscreteAllocation(
+                shorts,
+                self.latest_prices[list(shorts.keys())],
+                total_portfolio_value=short_val,
+            )
             short_alloc, short_leftover = da_short.lp_portfolio(solver=solver)
             short_alloc = {t: -v for t, v in short_alloc.items()}
 
@@ -184,12 +205,7 @@ class DiscreteAllocation:
         delta = ideal_weights * self.total_portfolio_value - cp.multiply(x, prices)
         u = cp.Variable(n)
 
-        constraints = [
-            delta <= u,
-            -delta <= u,
-            x >= 0,
-            remaining_funds >= 0
-        ]
+        constraints = [delta <= u, -delta <= u, x >= 0, remaining_funds >= 0]
 
         objective = cp.sum(u) + remaining_funds
         prob = cp.Problem(cp.Minimize(objective), constraints)

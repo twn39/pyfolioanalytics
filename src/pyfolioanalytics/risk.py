@@ -129,13 +129,11 @@ def risk_contribution(weights: np.ndarray, sigma: np.ndarray) -> np.ndarray:
 
 
 def risk_decomposition(
-    weights: np.ndarray,
-    sigma: np.ndarray,
-    type: str = "StdDev"
+    weights: np.ndarray, sigma: np.ndarray, type: str = "StdDev"
 ) -> dict:
     """
     Comprehensive risk decomposition.
-    
+
     Parameters
     ----------
     weights : np.ndarray
@@ -144,7 +142,7 @@ def risk_decomposition(
         Covariance matrix.
     type : str
         'StdDev' (default) or 'var'.
-        
+
     Returns
     -------
     dict
@@ -171,7 +169,9 @@ def risk_decomposition(
     elif type == "var":
         total_risk = p_var
         mcr = 2 * (sigma @ weights)
-        ccr = weights * (sigma @ weights) # In PA, CCR for var is often w_i * (Sigma*w)_i
+        ccr = weights * (
+            sigma @ weights
+        )  # In PA, CCR for var is often w_i * (Sigma*w)_i
         if p_var < 1e-14:
             pcr = np.zeros_like(weights)
         else:
@@ -179,12 +179,7 @@ def risk_decomposition(
     else:
         raise ValueError("Type must be 'StdDev' or 'var'")
 
-    return {
-        "total": total_risk,
-        "mcr": mcr,
-        "ccr": ccr,
-        "pcr": pcr
-    }
+    return {"total": total_risk, "mcr": mcr, "ccr": ccr, "pcr": pcr}
 
 
 def factor_risk_decomposition(
@@ -246,11 +241,11 @@ def factor_risk_decomposition(
         "exposure": exposure,
         "mcr_factor": mcr_f,
         "ccr_factor": ccr_f,
-        "pcr_factor": ccr_f / total_risk if total_risk > 1e-14 else np.zeros_like(ccr_f),
-        "ccr_residual": ccr_resid,
-        "pcr_residual": ccr_resid / total_risk
+        "pcr_factor": ccr_f / total_risk
         if total_risk > 1e-14
-        else 0.0,
+        else np.zeros_like(ccr_f),
+        "ccr_residual": ccr_resid,
+        "pcr_residual": ccr_resid / total_risk if total_risk > 1e-14 else 0.0,
     }
 
 
@@ -352,14 +347,19 @@ def owa_risk(weights: np.ndarray, R: np.ndarray, owa_weights: np.ndarray) -> flo
 
 def owa_l_moment_weights(T: int, k: int = 2) -> np.ndarray:
     # Vectorized via broadcasting over the double loop on i and j
-    i_arr = np.arange(1, T + 1, dtype=float)   # shape (T,)
-    j_arr = np.arange(k, dtype=float)           # shape (k,)
+    i_arr = np.arange(1, T + 1, dtype=float)  # shape (T,)
+    j_arr = np.arange(k, dtype=float)  # shape (k,)
     # Expand dims for broadcasting: (T, k)
     i_col = i_arr[:, np.newaxis]
     j_row = j_arr[np.newaxis, :]
     signs = (-1.0) ** j_row
     # scipy binom is element-wise on arrays
-    terms = signs * binom(k - 1, j_row) * binom(i_col - 1, k - 1 - j_row) * binom(T - i_col, j_row)
+    terms = (
+        signs
+        * binom(k - 1, j_row)
+        * binom(i_col - 1, k - 1 - j_row)
+        * binom(T - i_col, j_row)
+    )
     w = terms.sum(axis=1) / (k * binom(T, k))
     return w
 
@@ -396,7 +396,7 @@ def owa_l_moment_crm_weights(
         a = ws @ phis.reshape(-1, 1)
         w = a.flatten()[::-1]
         for i in range(1, len(w)):
-            w[i] = np.min(w[:i+1])
+            w[i] = np.min(w[: i + 1])
         return w
 
     else:
@@ -427,6 +427,7 @@ def owa_l_moment_crm_weights(
 
         problem = cp.Problem(objective, constraints)
         import warnings
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="Solution may be inaccurate")
             try:
@@ -441,13 +442,13 @@ def owa_l_moment_crm_weights(
                 problem.solve()
 
         if phi.value is None:
-            return np.ones(T) / T # Fallback
+            return np.ones(T) / T  # Fallback
 
         phis = phi.value.flatten()
         a = (ws @ phis.reshape(-1, 1)).flatten()
         w = a[::-1]
         for i in range(1, len(w)):
-            w[i] = np.min(w[:i+1])
+            w[i] = np.min(w[: i + 1])
         return w
 
 
@@ -466,7 +467,9 @@ def owa_cvar_weights(T: int, p: float = 0.05) -> np.ndarray:
     return w
 
 
-def numerical_risk_contribution(weights: np.ndarray, R: np.ndarray, risk_func, **kwargs) -> np.ndarray:
+def numerical_risk_contribution(
+    weights: np.ndarray, R: np.ndarray, risk_func, **kwargs
+) -> np.ndarray:
     """
     Compute the marginal risk contribution of any risk measure using numerical differentiation (Euler's theorem).
     """

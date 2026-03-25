@@ -3,9 +3,7 @@ import pandas as pd
 
 
 def get_codependence_matrix(
-    R: pd.DataFrame,
-    method: str = "pearson",
-    **kwargs
+    R: pd.DataFrame, method: str = "pearson", **kwargs
 ) -> np.ndarray:
     """
     Calculate codependence (similarity) matrix for clustering.
@@ -29,10 +27,9 @@ def get_codependence_matrix(
     else:
         raise ValueError(f"Unknown codependence method: {method}")
 
+
 def get_distance_matrix(
-    codependence: np.ndarray,
-    method: str = "standard",
-    **kwargs
+    codependence: np.ndarray, method: str = "standard", **kwargs
 ) -> np.ndarray:
     """
     Convert a codependence (similarity) matrix into a distance matrix.
@@ -62,15 +59,17 @@ def get_distance_matrix(
     dist = np.clip(dist, 0.0, None)
     return dist
 
+
 def _distance_correlation_matrix(X: np.ndarray) -> np.ndarray:
     n_samples, n_features = X.shape
     dcor = np.ones((n_features, n_features))
     for i in range(n_features):
-        for j in range(i+1, n_features):
+        for j in range(i + 1, n_features):
             val = _dcor_1d(X[:, i], X[:, j])
             dcor[i, j] = val
             dcor[j, i] = val
     return dcor
+
 
 def _dcor_1d(x: np.ndarray, y: np.ndarray) -> float:
     # A fast, simplified calculation for distance correlation of 1D arrays
@@ -97,6 +96,7 @@ def _dcor_1d(x: np.ndarray, y: np.ndarray) -> float:
         return 0.0
     return np.sqrt(max(0, dcov2_xy / denom))
 
+
 def _mutual_info_matrix(X: np.ndarray, bins: int = 20) -> np.ndarray:
     """
     Calculate Normalized Mutual Information matrix.
@@ -117,7 +117,7 @@ def _mutual_info_matrix(X: np.ndarray, bins: int = 20) -> np.ndarray:
         binned_X[:, i] = np.digitize(X[:, i], edges[:-1]) - 1
 
     for i in range(n_features):
-        for j in range(i+1, n_features):
+        for j in range(i + 1, n_features):
             # Joint histogram
             hist2d, _, _ = np.histogram2d(binned_X[:, i], binned_X[:, j], bins=bins)
             p_xy = hist2d / n_samples
@@ -140,6 +140,7 @@ def _mutual_info_matrix(X: np.ndarray, bins: int = 20) -> np.ndarray:
 
     return mi_mat
 
+
 def _tail_dependence_matrix(X: np.ndarray, q: float = 0.05) -> np.ndarray:
     """Lower tail dependence matrix"""
     n_samples, n_features = X.shape
@@ -151,7 +152,7 @@ def _tail_dependence_matrix(X: np.ndarray, q: float = 0.05) -> np.ndarray:
     for i in range(n_features):
         is_tail_i = X[:, i] <= thresholds[i]
         p_i = np.mean(is_tail_i)
-        for j in range(i+1, n_features):
+        for j in range(i + 1, n_features):
             is_tail_j = X[:, j] <= thresholds[j]
             p_ij = np.mean(is_tail_i & is_tail_j)
 

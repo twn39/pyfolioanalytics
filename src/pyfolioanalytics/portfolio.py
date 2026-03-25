@@ -112,7 +112,9 @@ class Portfolio:
             upper = kwargs.get("upper")
 
             if B is None or lower is None or upper is None:
-                raise ValueError("Factor exposure constraint requires B, lower, and upper.")
+                raise ValueError(
+                    "Factor exposure constraint requires B, lower, and upper."
+                )
 
             # Convert B to matrix if it's a list or vector
             if isinstance(B, (list, np.ndarray)) and not isinstance(B, pd.DataFrame):
@@ -126,17 +128,19 @@ class Portfolio:
 
             nfactors = B.shape[1]
             if len(lower) != nfactors or len(upper) != nfactors:
-                raise ValueError(f"lower and upper must have length {nfactors} (number of factors).")
+                raise ValueError(
+                    f"lower and upper must have length {nfactors} (number of factors)."
+                )
 
-            constraint.update({
-                "B": B,
-                "lower": np.array(lower),
-                "upper": np.array(upper)
-            })
+            constraint.update(
+                {"B": B, "lower": np.array(lower), "upper": np.array(upper)}
+            )
         elif type == "leverage_exposure":
             leverage = kwargs.get("leverage")
             if leverage is None:
-                raise ValueError("leverage_exposure constraint requires 'leverage' parameter.")
+                raise ValueError(
+                    "leverage_exposure constraint requires 'leverage' parameter."
+                )
             constraint.update({"leverage": float(leverage)})
         elif type in ["diversification", "HHI"]:
             div_target = kwargs.get("div_target")
@@ -146,7 +150,9 @@ class Portfolio:
                 if hhi_target is not None:
                     div_target = 1.0 - hhi_target
                 else:
-                    raise ValueError("diversification constraint requires 'div_target' or 'hhi_target'.")
+                    raise ValueError(
+                        "diversification constraint requires 'div_target' or 'hhi_target'."
+                    )
             constraint.update({"div_target": float(div_target)})
         elif type == "robust":
             delta_mu = kwargs.get("delta_mu", 0.0)

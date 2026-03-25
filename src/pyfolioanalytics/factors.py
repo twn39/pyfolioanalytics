@@ -50,7 +50,7 @@ def centroid_analytical(n: int) -> np.ndarray:
     A = 0.4424
     B = 0.1185
     beta = 0.21
-    alpha = A - B * n**(-beta)
+    alpha = A - B * n ** (-beta)
     j = np.arange(1, n + 1)
     # R: qnorm((n + 1 - j - alpha) / (n - 2 * alpha + 1))
     c_hat = norm.ppf((n + 1 - j - alpha) / (n - 2 * alpha + 1))

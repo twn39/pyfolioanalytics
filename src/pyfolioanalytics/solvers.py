@@ -45,10 +45,10 @@ def solve_mvo(
             sigma_mu = constraints.get("sigma_mu")
             if sigma_mu is not None:
                 G_mu = np.linalg.cholesky(sigma_mu).T
-                mu_robust = mu # Base mu
+                mu_robust = mu  # Base mu
                 # We will add penalty term later in objective
             else:
-                robust_mu_type = "box" # Fallback
+                robust_mu_type = "box"  # Fallback
 
     # 2. Base constraints
 
@@ -193,13 +193,19 @@ def solve_mvo(
             # Conic constraints for robustness
             # PortfolioAnalytics/Optimisers.jl approach:
             # || G_sigma * vec(W + E) ||_2 <= sigma_risk
-            cp_constraints.append(cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk)
+            cp_constraints.append(
+                cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk
+            )
             cp_constraints.append(E >> 0)
 
             # [W w; w' 1] >> 0 (using 1 since we assume k=1 for non-ratio)
             # This is equivalent to W >> w @ w'
-            L = cp.vstack([cp.hstack([W, cp.reshape(w, (n, 1), order="C")]),
-                           cp.hstack([cp.reshape(w, (1, n), order="C"), np.array([[1.0]])])])
+            L = cp.vstack(
+                [
+                    cp.hstack([W, cp.reshape(w, (n, 1), order="C")]),
+                    cp.hstack([cp.reshape(w, (1, n), order="C"), np.array([[1.0]])]),
+                ]
+            )
             cp_constraints.append(L >> 0)
 
             risk_uncertainty = cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
@@ -211,9 +217,7 @@ def solve_mvo(
         risk_term = cp.quad_form(w, sigma)
 
     if min_return is not None:
-        prob = cp.Problem(
-            cp.Minimize(risk_term + tc_penalty), cp_constraints
-        )
+        prob = cp.Problem(cp.Minimize(risk_term + tc_penalty), cp_constraints)
     elif return_obj and risk_obj:
         risk_aversion = risk_obj.get("risk_aversion", 1.0)
         # Utility: 0.5 * lambda * risk_term - (mu'w - penalty)
@@ -226,9 +230,7 @@ def solve_mvo(
             cp_constraints,
         )
     elif risk_obj:
-        prob = cp.Problem(
-            cp.Minimize(risk_term + tc_penalty), cp_constraints
-        )
+        prob = cp.Problem(cp.Minimize(risk_term + tc_penalty), cp_constraints)
     elif return_obj:
         mult = return_obj.get("multiplier", -1.0)
         if mult < 0:
@@ -245,7 +247,6 @@ def solve_mvo(
         prob = cp.Problem(
             cp.Minimize(cp.quad_form(w, sigma) + tc_penalty), cp_constraints
         )
-
 
     try:
         if max_pos is not None:
@@ -340,13 +341,18 @@ def solve_nonlinear(
                     penalty_scale = 1.0 / p_var
                 else:
                     if R is None:
-                        raise ValueError(f"Historical returns R must be provided for alternative risk parity using {name}")
+                        raise ValueError(
+                            f"Historical returns R must be provided for alternative risk parity using {name}"
+                        )
                     import pyfolioanalytics.risk as pr
 
                     from .risk import numerical_risk_contribution
+
                     func = getattr(pr, name, None)
                     if not func:
-                        raise ValueError(f"Unsupported alternative risk measure: {name}")
+                        raise ValueError(
+                            f"Unsupported alternative risk measure: {name}"
+                        )
 
                     obj_args = obj.get("arguments", {})
                     # Calculate numerical risk contribution
@@ -365,6 +371,7 @@ def solve_nonlinear(
                     out += penalty_scale * np.sum(np.maximum(0, rc - max_p) ** 2)
             if name == "EVaR" and R is not None:
                 from .risk import EVaR
+
                 out += mult * EVaR(w, R, p=obj.get("arguments", {}).get("p", 0.95))
         return out
 
@@ -405,7 +412,9 @@ def solve_nonlinear(
         best_res = res  # Last attempt even if unsuccessful
 
     return {
-        "status": "optimal" if best_res.success else ("optimal_inaccurate" if best_res.x is not None else "failed"),
+        "status": "optimal"
+        if best_res.success
+        else ("optimal_inaccurate" if best_res.x is not None else "failed"),
         "weights": best_res.x if best_res.success else None,
         "obj_value": best_res.fun,
     }
@@ -553,6 +562,7 @@ def solve_owa(
     owa_weights = owa_obj_config.get("arguments", {}).get("owa_weights")
     if owa_weights is None:
         from .risk import owa_gmd_weights
+
         owa_weights = owa_gmd_weights(T)
 
     # Ensure owa_weights is length T
@@ -602,7 +612,11 @@ def solve_edar(
     T, n = R.shape
     w = cp.Variable(n)
     alpha_p = next(
-        (o.get("arguments", {}).get("p", 0.95) for o in objectives if o["name"] == "EDaR"),
+        (
+            o.get("arguments", {}).get("p", 0.95)
+            for o in objectives
+            if o["name"] == "EDaR"
+        ),
         0.95,
     )
     alpha = 1 - alpha_p
@@ -619,16 +633,18 @@ def solve_edar(
     else:
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    cp_constraints.extend(
+        [w >= constraints["min"].values, w <= constraints["max"].values]
+    )
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     cp_constraints.append(cum_ret[0] == 0)
     cp_constraints.append(u[0] == 0)
     for t in range(T):
-        cp_constraints.append(cum_ret[t+1] == cum_ret[t] + R[t] @ w)
-        cp_constraints.append(u[t+1] >= cum_ret[t+1])
-        cp_constraints.append(u[t+1] >= u[t])
-        cp_constraints.append(d[t] == u[t+1] - cum_ret[t+1])
+        cp_constraints.append(cum_ret[t + 1] == cum_ret[t] + R[t] @ w)
+        cp_constraints.append(u[t + 1] >= cum_ret[t + 1])
+        cp_constraints.append(u[t + 1] >= u[t])
+        cp_constraints.append(d[t] == u[t + 1] - cum_ret[t + 1])
 
     # EVaR applied to d (DCP compliant exponential cone formulation)
     t_evar = cp.Variable()
@@ -672,7 +688,9 @@ def solve_rlvar(
     else:
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    cp_constraints.extend(
+        [w >= constraints["min"].values, w <= constraints["max"].values]
+    )
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     # RLVaR primal formulation
@@ -713,7 +731,11 @@ def solve_rlvar(
         except Exception:
             prob.solve()
 
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
+    return {
+        "status": prob.status,
+        "weights": w.value,
+        "obj_value": prob.value / scale if w.value is not None else None,
+    }
 
 
 def solve_mad(
@@ -731,7 +753,9 @@ def solve_mad(
     else:
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    cp_constraints.extend(
+        [w >= constraints["min"].values, w <= constraints["max"].values]
+    )
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     mu_p = cp.mean(R @ w)
@@ -767,7 +791,9 @@ def solve_semi_mad(
     else:
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    cp_constraints.extend(
+        [w >= constraints["min"].values, w <= constraints["max"].values]
+    )
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     mu_p = cp.mean(R @ w)
@@ -810,7 +836,9 @@ def solve_rldar(
     else:
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    cp_constraints.extend(
+        [w >= constraints["min"].values, w <= constraints["max"].values]
+    )
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     # Drawdown tracking
@@ -820,10 +848,10 @@ def solve_rldar(
     cp_constraints.append(cum_ret[0] == 0)
     cp_constraints.append(u[0] == 0)
     for t in range(T):
-        cp_constraints.append(cum_ret[t+1] == cum_ret[t] + (R[t] * scale) @ w)
-        cp_constraints.append(u[t+1] >= cum_ret[t+1])
-        cp_constraints.append(u[t+1] >= u[t])
-        cp_constraints.append(d[t] == u[t+1] - cum_ret[t+1])
+        cp_constraints.append(cum_ret[t + 1] == cum_ret[t] + (R[t] * scale) @ w)
+        cp_constraints.append(u[t + 1] >= cum_ret[t + 1])
+        cp_constraints.append(u[t + 1] >= u[t])
+        cp_constraints.append(d[t] == u[t + 1] - cum_ret[t + 1])
 
     # RLVaR primal formulation applied to d
     t_rlvar = cp.Variable()
@@ -856,7 +884,11 @@ def solve_rldar(
         except Exception:
             prob.solve()
 
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
+    return {
+        "status": prob.status,
+        "weights": w.value,
+        "obj_value": prob.value / scale if w.value is not None else None,
+    }
 
 
 def solve_portfolio_cvxpy(

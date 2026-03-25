@@ -22,17 +22,24 @@ class BacktestResult:
         self.portfolio_returns = returns  # Alias for backward compatibility
         self.opt_results = opt_results
         self.eop_weights = eop_weights if eop_weights is not None else weights.copy()
-        self.turnover = turnover if turnover is not None else pd.Series(0.0, index=returns.index)
+        self.turnover = (
+            turnover if turnover is not None else pd.Series(0.0, index=returns.index)
+        )
         self.net_returns = net_returns if net_returns is not None else returns.copy()
 
-    def summary(self, risk_free_rate: float = 0.0, benchmark_returns: pd.Series | None = None) -> pd.DataFrame:
+    def summary(
+        self, risk_free_rate: float = 0.0, benchmark_returns: pd.Series | None = None
+    ) -> pd.DataFrame:
         """
         Calculate key performance and risk metrics (Tearsheet) for the backtest.
         Returns a DataFrame comparing Gross vs Net returns.
         """
         metrics = {}
 
-        for ret_type, ret_series in [("Gross", self.returns), ("Net", self.net_returns)]:
+        for ret_type, ret_series in [
+            ("Gross", self.returns),
+            ("Net", self.net_returns),
+        ]:
             if ret_series.empty:
                 continue
 
@@ -48,12 +55,20 @@ class BacktestResult:
 
             # Sharpe Ratio
             excess_ret = ret_series - (risk_free_rate / 252)
-            sharpe = (excess_ret.mean() / ret_series.std()) * np.sqrt(252) if ret_series.std() > 0 else np.nan
+            sharpe = (
+                (excess_ret.mean() / ret_series.std()) * np.sqrt(252)
+                if ret_series.std() > 0
+                else np.nan
+            )
 
             # Sortino Ratio
             downside_ret = ret_series[ret_series < 0]
             downside_vol = downside_ret.std() * np.sqrt(252)
-            sortino = (excess_ret.mean() * np.sqrt(252)) / downside_vol if downside_vol > 0 else np.nan
+            sortino = (
+                (excess_ret.mean() * np.sqrt(252)) / downside_vol
+                if downside_vol > 0
+                else np.nan
+            )
 
             # Max Drawdown
             cum_vals = (1 + ret_series).cumprod()
@@ -78,7 +93,11 @@ class BacktestResult:
 
             # Value at Risk / Expected Shortfall (historical 95%)
             var_95 = -np.percentile(ret_series, 5) if len(ret_series) > 0 else np.nan
-            es_95 = -ret_series[ret_series <= -var_95].mean() if len(ret_series[ret_series <= -var_95]) > 0 else np.nan
+            es_95 = (
+                -ret_series[ret_series <= -var_95].mean()
+                if len(ret_series[ret_series <= -var_95]) > 0
+                else np.nan
+            )
 
             # Tail Ratio: 95th percentile / abs(5th percentile)
             pct_95 = np.percentile(ret_series, 95)
@@ -111,13 +130,21 @@ class BacktestResult:
                     down_market = bench_a < 0
 
                     if up_market.any():
-                        r_up = (1 + ret_a[up_market]).prod() ** (252 / up_market.sum()) - 1
-                        b_up = (1 + bench_a[up_market]).prod() ** (252 / up_market.sum()) - 1
+                        r_up = (1 + ret_a[up_market]).prod() ** (
+                            252 / up_market.sum()
+                        ) - 1
+                        b_up = (1 + bench_a[up_market]).prod() ** (
+                            252 / up_market.sum()
+                        ) - 1
                         up_capture = r_up / b_up if b_up > 0 else np.nan
 
                     if down_market.any():
-                        r_down = (1 + ret_a[down_market]).prod() ** (252 / down_market.sum()) - 1
-                        b_down = (1 + bench_a[down_market]).prod() ** (252 / down_market.sum()) - 1
+                        r_down = (1 + ret_a[down_market]).prod() ** (
+                            252 / down_market.sum()
+                        ) - 1
+                        b_down = (1 + bench_a[down_market]).prod() ** (
+                            252 / down_market.sum()
+                        ) - 1
                         down_capture = r_down / b_down if b_down < 0 else np.nan
 
             metrics[ret_type] = {
@@ -138,12 +165,16 @@ class BacktestResult:
                 "Tracking Error": tracking_error,
                 "Information Ratio": info_ratio,
                 "Up Capture Ratio": up_capture,
-                "Down Capture Ratio": down_capture
+                "Down Capture Ratio": down_capture,
             }
 
         # Add turnover stat (same for gross/net)
         total_turnover = self.turnover.sum()
-        avg_turnover = self.turnover[self.turnover > 0].mean() if (self.turnover > 0).any() else 0.0
+        avg_turnover = (
+            self.turnover[self.turnover > 0].mean()
+            if (self.turnover > 0).any()
+            else 0.0
+        )
 
         df = pd.DataFrame(metrics)
         df.loc["Total Turnover"] = total_turnover
@@ -288,8 +319,12 @@ def backtest_portfolio(
 
         last_eop_weights = pd.Series(w, index=R.columns)
 
-        all_bop_weights.append(pd.DataFrame(bop_weights_matrix, index=R_period.index, columns=R.columns))
-        all_eop_weights.append(pd.DataFrame(eop_weights_matrix, index=R_period.index, columns=R.columns))
+        all_bop_weights.append(
+            pd.DataFrame(bop_weights_matrix, index=R_period.index, columns=R.columns)
+        )
+        all_eop_weights.append(
+            pd.DataFrame(eop_weights_matrix, index=R_period.index, columns=R.columns)
+        )
         all_returns.append(pd.Series(port_ret_array, index=R_period.index))
         all_net_returns.append(pd.Series(net_ret_array, index=R_period.index))
         all_turnover.append(pd.Series(turnover_array, index=R_period.index))
@@ -309,11 +344,13 @@ def backtest_portfolio(
     full_turnover = pd.concat(all_turnover)
 
     # Remove duplicates, keeping the first occurrence (which would be the rebalance day with new weights)
-    full_weights = full_weights[~full_weights.index.duplicated(keep='first')]
-    full_eop = full_eop[~full_eop.index.duplicated(keep='first')]
-    full_returns = full_returns[~full_returns.index.duplicated(keep='first')]
-    full_net_returns = full_net_returns[~full_net_returns.index.duplicated(keep='first')]
-    full_turnover = full_turnover[~full_turnover.index.duplicated(keep='first')]
+    full_weights = full_weights[~full_weights.index.duplicated(keep="first")]
+    full_eop = full_eop[~full_eop.index.duplicated(keep="first")]
+    full_returns = full_returns[~full_returns.index.duplicated(keep="first")]
+    full_net_returns = full_net_returns[
+        ~full_net_returns.index.duplicated(keep="first")
+    ]
+    full_turnover = full_turnover[~full_turnover.index.duplicated(keep="first")]
 
     return BacktestResult(
         weights=full_weights,
@@ -321,7 +358,7 @@ def backtest_portfolio(
         opt_results=all_opt_results,
         eop_weights=full_eop,
         turnover=full_turnover,
-        net_returns=full_net_returns
+        net_returns=full_net_returns,
     )
 
 

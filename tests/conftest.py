@@ -4,6 +4,7 @@ Shared pytest fixtures for the pyfolioanalytics test suite.
 Session-scoped fixtures are used for data-loading operations so that CSV
 files are only read once per pytest run, not once per test function.
 """
+
 import os
 import pytest
 import pandas as pd

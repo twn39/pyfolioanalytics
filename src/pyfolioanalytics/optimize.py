@@ -95,9 +95,15 @@ def calculate_objective_measures(
             measures[obj_name] = owa_risk(weights, R, owa_weights)
 
         # Track tracking error for objectives or constraints
-        te_benchmark = obj_args.get("benchmark") or (constraints.get("benchmark") if constraints else None)
+        te_benchmark = obj_args.get("benchmark") or (
+            constraints.get("benchmark") if constraints else None
+        )
 
-        if (obj_name == "tracking_error" or obj_type == "tracking_error" or (obj_name == "StdDev" and te_benchmark is not None)) and sigma is not None:
+        if (
+            obj_name == "tracking_error"
+            or obj_type == "tracking_error"
+            or (obj_name == "StdDev" and te_benchmark is not None)
+        ) and sigma is not None:
             if te_benchmark is not None:
                 w_b = te_benchmark
                 if isinstance(w_b, dict) and constraints is not None:
@@ -118,13 +124,20 @@ def calculate_objective_measures(
                 import pyfolioanalytics.risk as pr
 
                 from .risk import numerical_risk_contribution
+
                 func = getattr(pr, obj_name, None)
                 if func is None:
                     # Fallback to StdDev if not found or something else
-                    rc = risk_contribution(weights, sigma) if sigma is not None else np.zeros_like(weights)
+                    rc = (
+                        risk_contribution(weights, sigma)
+                        if sigma is not None
+                        else np.zeros_like(weights)
+                    )
                 else:
                     if R is None:
-                        raise ValueError(f"Historical returns R must be provided for alternative risk parity using {obj_name}")
+                        raise ValueError(
+                            f"Historical returns R must be provided for alternative risk parity using {obj_name}"
+                        )
                     rc = numerical_risk_contribution(weights, R, func, **obj_args)
 
             measures["risk_contribution_" + obj_name] = rc
@@ -150,7 +163,10 @@ def optimize_portfolio(
     R: pd.DataFrame, portfolio: Portfolio, optimize_method: str = "ROI", **kwargs
 ) -> dict[str, Any]:
     # 1. Dispatch Multi-Layer
-    if hasattr(portfolio, "sub_portfolios") and len(getattr(portfolio, "sub_portfolios", {})) > 0:
+    if (
+        hasattr(portfolio, "sub_portfolios")
+        and len(getattr(portfolio, "sub_portfolios", {})) > 0
+    ):
         return optimize_portfolio_multi_layer(R, portfolio, **kwargs)
 
     # 2. Setup Moments
@@ -159,20 +175,64 @@ def optimize_portfolio(
 
     # 3. Setup Constraints
     constraints = portfolio.get_constraints()
-    for k in ["delta_mu", "robust_mu_type", "sigma_mu", "k_mu", "robust_sigma_type", "sigma_sigma", "k_sigma"]:
+    for k in [
+        "delta_mu",
+        "robust_mu_type",
+        "sigma_mu",
+        "k_mu",
+        "robust_sigma_type",
+        "sigma_sigma",
+        "k_sigma",
+    ]:
         if k in kwargs:
             constraints[k] = kwargs[k]
 
     # 4. Specialized ML methods
     if optimize_method == "HRP":
         w_hrp = hrp_optimization(R, **kwargs)
-        return {"weights": w_hrp, "objective_measures": calculate_objective_measures(w_hrp.values, moments, portfolio.objectives, R=R.values, constraints=constraints), "status": "optimal", "moments": moments, "portfolio": portfolio}
+        return {
+            "weights": w_hrp,
+            "objective_measures": calculate_objective_measures(
+                w_hrp.values,
+                moments,
+                portfolio.objectives,
+                R=R.values,
+                constraints=constraints,
+            ),
+            "status": "optimal",
+            "moments": moments,
+            "portfolio": portfolio,
+        }
     if optimize_method == "HERC":
         w_herc = herc_optimization(R, **kwargs)
-        return {"weights": w_herc, "objective_measures": calculate_objective_measures(w_herc.values, moments, portfolio.objectives, R=R.values, constraints=constraints), "status": "optimal", "moments": moments, "portfolio": portfolio}
+        return {
+            "weights": w_herc,
+            "objective_measures": calculate_objective_measures(
+                w_herc.values,
+                moments,
+                portfolio.objectives,
+                R=R.values,
+                constraints=constraints,
+            ),
+            "status": "optimal",
+            "moments": moments,
+            "portfolio": portfolio,
+        }
     if optimize_method == "NCO":
         w_nco = nco_optimization(R, **kwargs)
-        return {"weights": w_nco, "objective_measures": calculate_objective_measures(w_nco.values, moments, portfolio.objectives, R=R.values, constraints=constraints), "status": "optimal", "moments": moments, "portfolio": portfolio}
+        return {
+            "weights": w_nco,
+            "objective_measures": calculate_objective_measures(
+                w_nco.values,
+                moments,
+                portfolio.objectives,
+                R=R.values,
+                constraints=constraints,
+            ),
+            "status": "optimal",
+            "moments": moments,
+            "portfolio": portfolio,
+        }
 
     # 5. Random Portfolios Engine
     if optimize_method == "random":
@@ -180,10 +240,17 @@ def optimize_portfolio(
         permutations = rp_kwargs.pop("permutations", 2000)
         rp_method = rp_kwargs.pop("rp_method", "transform")
         # generate random portfolios
-        rp_weights = random_portfolios(portfolio, permutations=permutations, method=rp_method, **rp_kwargs)
+        rp_weights = random_portfolios(
+            portfolio, permutations=permutations, method=rp_method, **rp_kwargs
+        )
 
         if len(rp_weights) == 0:
-            return {"weights": None, "status": "infeasible", "moments": moments, "portfolio": portfolio}
+            return {
+                "weights": None,
+                "status": "infeasible",
+                "moments": moments,
+                "portfolio": portfolio,
+            }
 
         best_score = float("inf")
         best_w = None
@@ -193,7 +260,9 @@ def optimize_portfolio(
         enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
 
         for w in rp_weights:
-            measures = calculate_objective_measures(w, moments, enabled_objs, R=R_vals, constraints=constraints)
+            measures = calculate_objective_measures(
+                w, moments, enabled_objs, R=R_vals, constraints=constraints
+            )
 
             # Penalize constraint violations
             penalty = 0.0
@@ -222,22 +291,47 @@ def optimize_portfolio(
                 best_measures = measures
 
         final_w = pd.Series(best_w, index=R.columns)
-        return {"weights": final_w, "objective_measures": best_measures, "status": "optimal", "moments": moments, "portfolio": portfolio}
+        return {
+            "weights": final_w,
+            "objective_measures": best_measures,
+            "status": "optimal",
+            "moments": moments,
+            "portfolio": portfolio,
+        }
 
     # 6. Direct optimization for specific measures
     result = None
     enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
     has_risk_budget = any(obj.get("type") == "risk_budget" for obj in enabled_objs)
 
-    if not has_risk_budget and optimize_method not in ["Kelly", "MDIV", "NOC", "CLA", "random", "HRP", "HERC", "NCO"]:
-        risk_obj = next((o for o in enabled_objs if o.get("type") in ["risk", "portfolio_risk_objective"]), None)
+    if not has_risk_budget and optimize_method not in [
+        "Kelly",
+        "MDIV",
+        "NOC",
+        "CLA",
+        "random",
+        "HRP",
+        "HERC",
+        "NCO",
+    ]:
+        risk_obj = next(
+            (
+                o
+                for o in enabled_objs
+                if o.get("type") in ["risk", "portfolio_risk_objective"]
+            ),
+            None,
+        )
         risk_name = risk_obj.get("name", "StdDev") if risk_obj else "StdDev"
 
         if risk_name == "L_Moment_CRM":
             import copy
 
             from .risk import owa_l_moment_crm_weights
-            w_owa = owa_l_moment_crm_weights(R.shape[0], **risk_obj.get("arguments", {}))
+
+            w_owa = owa_l_moment_crm_weights(
+                R.shape[0], **risk_obj.get("arguments", {})
+            )
             opt_portfolio = copy.deepcopy(portfolio)
             for o in opt_portfolio.objectives:
                 if o.get("name") == "L_Moment_CRM":
@@ -251,7 +345,13 @@ def optimize_portfolio(
             opt_objs = portfolio.objectives
 
         if risk_name in RISK_STRATEGIES or risk_name in ["var"]:
-            opt = ConvexOptimizer(moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs)
+            opt = ConvexOptimizer(
+                moments,
+                constraints,
+                opt_objs,
+                R=R.values if R is not None else None,
+                **kwargs,
+            )
             result = opt.solve()
 
     if result is None:
@@ -260,14 +360,28 @@ def optimize_portfolio(
         elif optimize_method == "MDIV":
             result = solve_mdiv(moments, constraints, **kwargs)
         elif optimize_method == "NOC":
-            result = solve_noc(R.values, moments, constraints, portfolio.objectives, **kwargs)
+            result = solve_noc(
+                R.values, moments, constraints, portfolio.objectives, **kwargs
+            )
         elif optimize_method == "CLA":
             result = solve_cla(moments, constraints, portfolio.objectives, **kwargs)
         elif has_risk_budget:
-            result = solve_nonlinear(moments, constraints, portfolio.objectives, R=R.values if R is not None else None, **kwargs)
+            result = solve_nonlinear(
+                moments,
+                constraints,
+                portfolio.objectives,
+                R=R.values if R is not None else None,
+                **kwargs,
+            )
         else:
             # Fallback (should be covered by ConvexOptimizer now)
-            opt = ConvexOptimizer(moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs)
+            opt = ConvexOptimizer(
+                moments,
+                constraints,
+                opt_objs,
+                R=R.values if R is not None else None,
+                **kwargs,
+            )
             result = opt.solve()
 
     if result.get("status") in ["optimal", "feasible", "optimal_inaccurate"]:
@@ -275,11 +389,20 @@ def optimize_portfolio(
         assets_keys = list(portfolio.assets.keys())
         return {
             "weights": pd.Series(w, index=assets_keys),
-            "objective_measures": calculate_objective_measures(w, moments, portfolio.objectives, R=R.values, constraints=constraints),
-            "status": result["status"], "moments": moments, "portfolio": portfolio,
+            "objective_measures": calculate_objective_measures(
+                w, moments, portfolio.objectives, R=R.values, constraints=constraints
+            ),
+            "status": result["status"],
+            "moments": moments,
+            "portfolio": portfolio,
         }
     else:
-        return {"status": result.get("status", "failed"), "message": result.get("message", "Optimization failed"), "moments": moments, "portfolio": portfolio}
+        return {
+            "status": result.get("status", "failed"),
+            "message": result.get("message", "Optimization failed"),
+            "moments": moments,
+            "portfolio": portfolio,
+        }
 
 
 def optimize_portfolio_multi_layer(
@@ -295,7 +418,9 @@ def optimize_portfolio_multi_layer(
         sub_returns[meta_asset] = R[leaf_assets] @ res["weights"]
 
     meta_R = pd.DataFrame(sub_returns)
-    other_assets = [a for a in portfolio.root.assets.keys() if a not in portfolio.sub_portfolios]
+    other_assets = [
+        a for a in portfolio.root.assets.keys() if a not in portfolio.sub_portfolios
+    ]
     if other_assets:
         meta_R = pd.concat([meta_R, R[other_assets]], axis=1)
 
@@ -318,15 +443,26 @@ def optimize_portfolio_multi_layer(
 
     full_assets_port = Portfolio(assets=list(R.columns))
     moments = set_portfolio_moments(R, full_assets_port)
-    measures = calculate_objective_measures(final_weights.values, moments, portfolio.root.objectives, R=R.values)
+    measures = calculate_objective_measures(
+        final_weights.values, moments, portfolio.root.objectives, R=R.values
+    )
 
-    return {"weights": final_weights, "objective_measures": measures, "root_result": root_res, "sub_results": sub_results, "status": root_res["status"], "portfolio": portfolio}
+    return {
+        "weights": final_weights,
+        "objective_measures": measures,
+        "root_result": root_res,
+        "sub_results": sub_results,
+        "status": root_res["status"],
+        "portfolio": portfolio,
+    }
 
 
 def create_efficient_frontier(
     R: pd.DataFrame, portfolio: Portfolio, n_portfolios: int = 10, **kwargs
 ) -> pd.DataFrame:
-    port_min = portfolio.copy().clear_objectives().add_objective(type="risk", name="StdDev")
+    port_min = (
+        portfolio.copy().clear_objectives().add_objective(type="risk", name="StdDev")
+    )
     res_min = optimize_portfolio(R, port_min, **kwargs)
     if res_min["status"] not in ["optimal", "feasible", "optimal_inaccurate"]:
         raise ValueError("Min risk portfolio failed")
@@ -336,10 +472,19 @@ def create_efficient_frontier(
     if res_max["status"] not in ["optimal", "feasible", "optimal_inaccurate"]:
         raise ValueError("Max return portfolio failed")
 
-    target_returns = np.linspace(res_min["objective_measures"]["mean"], res_max["objective_measures"]["mean"], n_portfolios)
+    target_returns = np.linspace(
+        res_min["objective_measures"]["mean"],
+        res_max["objective_measures"]["mean"],
+        n_portfolios,
+    )
     frontier_data = []
     for ret in target_returns:
-        port_tmp = portfolio.copy().clear_objectives().add_objective(type="risk", name="StdDev").add_objective(type="return", name="mean", target=ret)
+        port_tmp = (
+            portfolio.copy()
+            .clear_objectives()
+            .add_objective(type="risk", name="StdDev")
+            .add_objective(type="return", name="mean", target=ret)
+        )
         res = optimize_portfolio(R, port_tmp, **kwargs)
         if res["status"] in ["optimal", "feasible", "optimal_inaccurate"]:
             row = res["objective_measures"].copy()

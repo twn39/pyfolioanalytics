@@ -9,15 +9,15 @@ from .factors import ac_ranking, factor_model_covariance, statistical_factor_mod
 def M3_MM(R: np.ndarray) -> np.ndarray:
     T, N = R.shape
     # Vectorized: M3[i,j,k] = mean(R[:,i] * R[:,j] * R[:,k])
-    M3 = np.einsum('ti,tj,tk->ijk', R, R, R) / T
+    M3 = np.einsum("ti,tj,tk->ijk", R, R, R) / T
     return M3.reshape(N, N * N)
 
 
 def M4_MM(R: np.ndarray) -> np.ndarray:
     T, N = R.shape
     # Vectorized: M4[i,j,k,l] = mean(R[:,i] * R[:,j] * R[:,k] * R[:,l])
-    M4 = np.einsum('ti,tj,tk,tl->ijkl', R, R, R, R) / T
-    return M4.reshape(N, N ** 3)
+    M4 = np.einsum("ti,tj,tk,tl->ijkl", R, R, R, R) / T
+    return M4.reshape(N, N**3)
 
 
 def M3_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
@@ -25,6 +25,7 @@ def M3_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
     Coskewness matrix estimate via Statistical Factor Model.
     """
     from .factors import statistical_factor_model
+
     fm = statistical_factor_model(R, k=k)
     B = fm["loadings"].values
     f = fm["factors"].values
@@ -55,6 +56,7 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
     Cokurtosis matrix estimate via Statistical Factor Model.
     """
     from .factors import statistical_factor_model
+
     fm = statistical_factor_model(R, k=k)
     B = fm["loadings"].values
     f = fm["factors"].values
@@ -98,10 +100,22 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
                 for k_idx in range(N):
                     for l_idx in range(N):
                         kijkl = 0.0
-                        if (i == j) or (i == k_idx) or (i == l_idx) or (j == k_idx) or (j == l_idx) or (k_idx == l_idx):
+                        if (
+                            (i == j)
+                            or (i == k_idx)
+                            or (i == l_idx)
+                            or (j == k_idx)
+                            or (j == l_idx)
+                            or (k_idx == l_idx)
+                        ):
                             if (i == j) and (i == k_idx) and (i == l_idx):
                                 kijkl = 6 * b[i] * b[i] * f2_val * s2[i] + s4[i]
-                            elif ((i == j) and (i == k_idx)) or ((i == j) and (i == l_idx)) or ((i == k_idx) and (i == l_idx)) or ((j == k_idx) and (j == l_idx)):
+                            elif (
+                                ((i == j) and (i == k_idx))
+                                or ((i == j) and (i == l_idx))
+                                or ((i == k_idx) and (i == l_idx))
+                                or ((j == k_idx) and (j == l_idx))
+                            ):
                                 if (i == j) and (i == k_idx):
                                     kijkl = 3 * b[i] * b[l_idx] * f2_val * s2[i]
                                 elif (i == j) and (i == l_idx):
@@ -110,13 +124,29 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
                                     kijkl = 3 * b[i] * b[j] * f2_val * s2[i]
                                 elif (j == k_idx) and (j == l_idx):
                                     kijkl = 3 * b[j] * b[i] * f2_val * s2[j]
-                            elif ((i == j) and (k_idx == l_idx)) or ((i == k_idx) and (j == l_idx)) or ((i == l_idx) and (j == k_idx)):
+                            elif (
+                                ((i == j) and (k_idx == l_idx))
+                                or ((i == k_idx) and (j == l_idx))
+                                or ((i == l_idx) and (j == k_idx))
+                            ):
                                 if (i == j) and (k_idx == l_idx):
-                                    kijkl = b[i] * b[i] * f2_val * s2[k_idx] + b[k_idx] * b[k_idx] * f2_val * s2[i] + s2[i] * s2[k_idx]
+                                    kijkl = (
+                                        b[i] * b[i] * f2_val * s2[k_idx]
+                                        + b[k_idx] * b[k_idx] * f2_val * s2[i]
+                                        + s2[i] * s2[k_idx]
+                                    )
                                 elif (i == k_idx) and (j == l_idx):
-                                    kijkl = b[i] * b[i] * f2_val * s2[j] + b[j] * b[j] * f2_val * s2[i] + s2[i] * s2[j]
+                                    kijkl = (
+                                        b[i] * b[i] * f2_val * s2[j]
+                                        + b[j] * b[j] * f2_val * s2[i]
+                                        + s2[i] * s2[j]
+                                    )
                                 elif (i == l_idx) and (j == k_idx):
-                                    kijkl = b[i] * b[i] * f2_val * s2[j] + b[j] * b[j] * f2_val * s2[i] + s2[i] * s2[j]
+                                    kijkl = (
+                                        b[i] * b[i] * f2_val * s2[j]
+                                        + b[j] * b[j] * f2_val * s2[i]
+                                        + s2[i] * s2[j]
+                                    )
                             else:
                                 if i == j:
                                     kijkl = b[k_idx] * b[l_idx] * f2_val * s2[i]
@@ -133,7 +163,6 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
 
                         D[l_idx, i * N * N + j * N + k_idx] = kijkl
     else:
-
         # Multi-factor residual approximation
         for i in range(N):
             D[i, i * N**2 + i * N + i] = stockM4[i]
@@ -141,7 +170,9 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
     return S + D
 
 
-def shrink_comoments(M_sample: np.ndarray, M_target: np.ndarray, alpha: float = 0.5) -> np.ndarray:
+def shrink_comoments(
+    M_sample: np.ndarray, M_target: np.ndarray, alpha: float = 0.5
+) -> np.ndarray:
     return (1 - alpha) * M_sample + alpha * M_target
 
 
@@ -193,13 +224,13 @@ def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, 
         y = R_centered[:, i] * scale_factor
 
         # Fit GARCH(1,1)
-        model = arch_model(y, vol='Garch', p=1, q=1, mean='Zero', dist='Normal')
+        model = arch_model(y, vol="Garch", p=1, q=1, mean="Zero", dist="Normal")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            res = model.fit(disp='off', show_warning=False)
+            res = model.fit(disp="off", show_warning=False)
 
         # alpha1 check (on scaled parameters)
-        alpha1 = res.params.get('alpha[1]', 0.0)
+        alpha1 = res.params.get("alpha[1]", 0.0)
 
         if alpha1 < 0.01:
             sigmat_scaled = np.full(T, np.std(y))
@@ -232,7 +263,7 @@ def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, 
         "mu": mu.reshape(-1, 1),
         "sigma": sigma,
         "m3": M3_MM(U_rescaled),
-        "m4": M4_MM(U_rescaled)
+        "m4": M4_MM(U_rescaled),
     }
 
 
@@ -269,6 +300,7 @@ def set_portfolio_moments(
             "w_mkt", np.full((len(asset_names), 1), 1.0 / len(asset_names))
         )
         from typing import cast
+
         P = cast(np.ndarray, kwargs.get("P"))
         q = cast(np.ndarray, kwargs.get("q"))
         tau = kwargs.get("tau", 0.05)
@@ -277,7 +309,6 @@ def set_portfolio_moments(
         moments["mu"] = res_bl["mu"]
         moments["sigma"] = res_bl["sigma"]
     elif method == "shrinkage":
-
         from sklearn.covariance import OAS, LedoitWolf
 
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
@@ -321,7 +352,7 @@ def set_portfolio_moments(
             Pi_mat = np.zeros((N, N))
             for i in range(N):
                 for j in range(N):
-                    Pi_mat[i, j] = np.sum((Y[:, i] * Y[:, j] - S[i, j])**2) / T
+                    Pi_mat[i, j] = np.sum((Y[:, i] * Y[:, j] - S[i, j]) ** 2) / T
 
             pi_hat = np.sum(Pi_mat)
 
@@ -333,14 +364,24 @@ def set_portfolio_moments(
                 for j in range(N):
                     if i != j:
                         term2 += (r_bar / 2) * (
-                            np.sqrt(S[j,j]/S[i,i]) * np.sum((Y[:, i]**2 * Y[:, j] - S[i,i]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T +
-                            np.sqrt(S[i,i]/S[j,j]) * np.sum((Y[:, j]**2 * Y[:, i] - S[j,j]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T
-                        ) - r_bar * np.sqrt(S[i,i] * S[j,j]) * Pi_mat[i, j]
+                            np.sqrt(S[j, j] / S[i, i])
+                            * np.sum(
+                                (Y[:, i] ** 2 * Y[:, j] - S[i, i] * S[i, j])
+                                * (Y[:, i] * Y[:, j] - S[i, j])
+                            )
+                            / T
+                            + np.sqrt(S[i, i] / S[j, j])
+                            * np.sum(
+                                (Y[:, j] ** 2 * Y[:, i] - S[j, j] * S[i, j])
+                                * (Y[:, i] * Y[:, j] - S[i, j])
+                            )
+                            / T
+                        ) - r_bar * np.sqrt(S[i, i] * S[j, j]) * Pi_mat[i, j]
 
             rho_hat = term1 + term2
 
             # Estimate Gamma
-            gamma_hat = np.sum((S - F)**2)
+            gamma_hat = np.sum((S - F) ** 2)
 
             # Shrinkage intensity
             kappa_hat = (pi_hat - rho_hat) / gamma_hat

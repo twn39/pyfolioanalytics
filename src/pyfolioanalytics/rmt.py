@@ -10,13 +10,18 @@ def marchenko_pastur_pdf(x: np.ndarray, q: float, sigma2: float = 1.0) -> np.nda
     Theoretical Marchenko-Pastur PDF.
     q = T / N (observations / assets)
     """
-    e_min = sigma2 * (1 - np.sqrt(1.0 / q))**2
-    e_max = sigma2 * (1 + np.sqrt(1.0 / q))**2
+    e_min = sigma2 * (1 - np.sqrt(1.0 / q)) ** 2
+    e_max = sigma2 * (1 + np.sqrt(1.0 / q)) ** 2
 
     # Avoid division by zero
     x_safe = np.maximum(x, 1e-10)
-    pdf = q / (2 * np.pi * sigma2 * x_safe) * np.sqrt(np.maximum(0, (e_max - x) * (x - e_min)))
+    pdf = (
+        q
+        / (2 * np.pi * sigma2 * x_safe)
+        * np.sqrt(np.maximum(0, (e_max - x) * (x - e_min)))
+    )
     return pdf
+
 
 def find_max_eigenvalue(eigenvalues: np.ndarray, q: float) -> tuple[float, float]:
     """
@@ -35,17 +40,18 @@ def find_max_eigenvalue(eigenvalues: np.ndarray, q: float) -> tuple[float, float
         pdf_theo = marchenko_pastur_pdf(bin_centers, q, sigma2)
         return float(np.sum((hist - pdf_theo) ** 2))
 
-    res = minimize_scalar(_fit_err, bounds=(1e-5, 1.0), args=(), method='bounded')
+    res = minimize_scalar(_fit_err, bounds=(1e-5, 1.0), args=(), method="bounded")
     sigma2 = res.x
-    e_max = sigma2 * (1 + np.sqrt(1.0 / q))**2
+    e_max = sigma2 * (1 + np.sqrt(1.0 / q)) ** 2
     return e_max, sigma2
+
 
 def denoise_covariance(
     sigma: np.ndarray,
     q: float,
     method: str = "fixed",
     alpha: float = 0.0,
-    is_correlation: bool = False
+    is_correlation: bool = False,
 ) -> np.ndarray:
     """
     Denoise a covariance or correlation matrix using Marchenko-Pastur theorem.
@@ -68,7 +74,7 @@ def denoise_covariance(
     n_noise = int(np.sum(vals <= e_max))
     if n_noise == 0:
         # Fallback
-        e_max = float((1 + np.sqrt(1.0 / q))**2)
+        e_max = float((1 + np.sqrt(1.0 / q)) ** 2)
         n_noise = int(np.sum(vals <= e_max))
         if n_noise == 0:
             return sigma
@@ -95,11 +101,9 @@ def denoise_covariance(
     else:
         return corr_denoised
 
+
 def gerber_statistic(
-    R: pd.DataFrame,
-    threshold: float = 0.5,
-    method: int = 1,
-    standardize: bool = False
+    R: pd.DataFrame, threshold: float = 0.5, method: int = 1, standardize: bool = False
 ) -> pd.DataFrame:
     """
     Compute the Gerber Statistic (robust co-movement measure).
@@ -111,12 +115,12 @@ def gerber_statistic(
         mu = np.mean(X, axis=0)
         std = np.std(X, axis=0, ddof=1)
         X = (X - mu) / std
-        U = (X >= threshold)
-        D = (X <= -threshold)
+        U = X >= threshold
+        D = X <= -threshold
     else:
         std = np.std(X, axis=0, ddof=1)
-        U = (X >= threshold * std)
-        D = (X <= -threshold * std)
+        U = X >= threshold * std
+        D = X <= -threshold * std
 
     UmD = U.astype(float) - D.astype(float)
 
@@ -124,23 +128,24 @@ def gerber_statistic(
         UpD = U.astype(float) + D.astype(float)
         H = UmD.T @ UmD
         denom = UpD.T @ UpD
-        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom != 0)
     elif method == 1:
         N_mat = (~U & ~D).astype(float)
         H = UmD.T @ UmD
         denom = T - (N_mat.T @ N_mat)
-        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom != 0)
     elif method == 2:
         H = UmD.T @ UmD
         h = np.sqrt(np.diag(H))
         denom = np.outer(h, h)
-        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom!=0)
+        rho = np.divide(H, denom, out=np.zeros_like(H), where=denom != 0)
     else:
         raise ValueError("Method must be 0, 1, or 2")
 
     std_orig = np.std(R.values, axis=0, ddof=1)
     sigma = rho * np.outer(std_orig, std_orig)
     return pd.DataFrame(sigma, index=R.columns, columns=R.columns)
+
 
 def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
     """
@@ -159,6 +164,7 @@ def detone_covariance(sigma: np.ndarray, n_components: int = 1) -> np.ndarray:
 
     sigma_detoned = vecs @ np.diag(vals_detoned) @ vecs.T
     return sigma_detoned
+
 
 def bootstrap_uncertainty_set(
     R: pd.DataFrame,
@@ -184,8 +190,8 @@ def bootstrap_uncertainty_set(
     sigma_sims = np.array(sigma_sims)
 
     # 1. Box uncertainty for mu
-    mu_lb = np.quantile(mu_sims, q/2, axis=0)
-    mu_ub = np.quantile(mu_sims, 1-q/2, axis=0)
+    mu_lb = np.quantile(mu_sims, q / 2, axis=0)
+    mu_ub = np.quantile(mu_sims, 1 - q / 2, axis=0)
 
     # 2. Ellipsoidal uncertainty for mu
     mu_mean = np.mean(mu_sims, axis=0)
@@ -202,5 +208,5 @@ def bootstrap_uncertainty_set(
         "mu_mean": mu_mean,
         "mu_cov": mu_cov,
         "sigma_mean": sigma_mean,
-        "sigma_cov": sigma_cov
+        "sigma_cov": sigma_cov,
     }

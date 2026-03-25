@@ -29,6 +29,7 @@ def DBHTs(D, S, leaf_order=True):
 
     return (T8, Rpm, Adjv, Dpm, Mv, Z)
 
+
 def PMFG_T2s(W, nargout=3):
     N = W.shape[0]
     A = np.zeros((N, N))
@@ -87,9 +88,12 @@ def PMFG_T2s(W, nargout=3):
     A = W * ((A + A.T) == 1)
     cliques = None
     if nargout > 3:
-        cliques = np.vstack((in_v[0:4].reshape(1, -1), np.hstack((separators, in_v[4:].reshape(-1, 1)))))
+        cliques = np.vstack(
+            (in_v[0:4].reshape(1, -1), np.hstack((separators, in_v[4:].reshape(-1, 1))))
+        )
 
     return (A, tri, separators, cliques, None)
+
 
 def distance_wei(L):
     n = len(L)
@@ -105,8 +109,18 @@ def distance_wei(L):
             L1[:, V] = 0
             for v in V.tolist():
                 _, T, _ = sp.find(L1[v, :])
-                d = np.min(np.vstack((D[np.ix_([u], T)], D[np.ix_([u], [v])] + L1[np.ix_([v], T)])), axis=0)
-                wi = np.argmin(np.vstack((D[np.ix_([u], T)], D[np.ix_([u], [v])] + L1[np.ix_([v], T)])), axis=0)
+                d = np.min(
+                    np.vstack(
+                        (D[np.ix_([u], T)], D[np.ix_([u], [v])] + L1[np.ix_([v], T)])
+                    ),
+                    axis=0,
+                )
+                wi = np.argmin(
+                    np.vstack(
+                        (D[np.ix_([u], T)], D[np.ix_([u], [v])] + L1[np.ix_([v], T)])
+                    ),
+                    axis=0,
+                )
                 D[np.ix_([u], T)] = d
                 ind = T[wi == 2]
                 B[u, ind] = B[u, v] + 1
@@ -119,6 +133,7 @@ def distance_wei(L):
                 break
             V = np.ravel(np.argwhere(D[u, :] == minD))
     return (D, B)
+
 
 def CliqHierarchyTree2s(Apm, method1):
     N = Apm.shape[0]
@@ -164,6 +179,7 @@ def CliqHierarchyTree2s(Apm, method1):
     H2 = 1.0 * (H2 != 0)
     return (H, H2, Mb, CliqList, Sb)
 
+
 def BuildHierarchy(M):
     Pred = -1 * np.ones(M.shape[1])
     for n in range(0, M.shape[1]):
@@ -182,12 +198,15 @@ def BuildHierarchy(M):
             Pred[n] = -1
     return Pred
 
+
 def FindDisjoint(Adj, Cliq):
     N = Adj.shape[0]
     Temp = Adj.copy()
     T = np.zeros(N)
     IndxTotal = np.arange(0, N)
-    IndxNot = np.argwhere(np.logical_and(IndxTotal != Cliq[0], IndxTotal != Cliq[1], IndxTotal != Cliq[2]))
+    IndxNot = np.argwhere(
+        np.logical_and(IndxTotal != Cliq[0], IndxTotal != Cliq[1], IndxTotal != Cliq[2])
+    )
     Temp[np.int32(Cliq), :] = 0
     Temp[:, np.int32(Cliq)] = 0
     d, _ = breadth(Temp, IndxNot[0])
@@ -197,6 +216,7 @@ def FindDisjoint(Adj, Cliq):
     T[d != -1] = 2
     T[np.int32(Cliq)] = 0
     return (T, IndxNot)
+
 
 def BubbleHierarchy(Pred, Sb, A, CliqList):
     Nc = Pred.shape[0]
@@ -231,6 +251,7 @@ def BubbleHierarchy(Pred, Sb, A, CliqList):
     H = H - np.diag(np.diag(H))
     return (H, Mb)
 
+
 def clique3(A):
     A = A - np.diag(np.diag(A))
     A = 1.0 * (A != 0)
@@ -254,6 +275,7 @@ def clique3(A):
                 clique = np.vstack((clique, candidate.reshape(1, -1)))
     clique = clique[np.lexsort((clique[:, 2], clique[:, 1], clique[:, 0]))]
     return (K3, E, clique[1:])
+
 
 def breadth(CIJ, source):
     N = CIJ.shape[0]
@@ -279,6 +301,7 @@ def breadth(CIJ, source):
         Q = Q[1:]
         color[u] = black
     return (distance, branch)
+
 
 def BubbleCluster8s(Rpm, Dpm, Hb, Mb, Mv, CliqList):
     Hc, Sep = DirectHb(Rpm, Hb, Mb, Mv, CliqList)
@@ -313,6 +336,7 @@ def BubbleCluster8s(Rpm, Dpm, Hb, Mb, Mv, CliqList):
         Adjv = np.ones((N, 1))
     return (Adjv, Tc)
 
+
 def DirectHb(Rpm, Hb, Mb, Mv, CliqList):
     Hb_temp = 1 * (Hb != 0)
     r, c, _ = sp.find(sp.triu(sp.csr_matrix(Hb_temp)) != 0)
@@ -337,17 +361,23 @@ def DirectHb(Rpm, Hb, Mb, Mv, CliqList):
         vleft = np.setdiff1d(np.argwhere(Mv[:, d != -1] != 0)[:, 0], vo)
         vright = np.setdiff1d(np.argwhere(Mv[:, d == -1] != 0)[:, 0], vo)
         left, right = np.sum(Rpm[np.ix_(vo, vleft)]), np.sum(Rpm[np.ix_(vo, vright)])
-        if left > right: Hc[np.ix_(bright, bleft)] = left
-        else: Hc[np.ix_(bleft, bright)] = right
+        if left > right:
+            Hc[np.ix_(bright, bleft)] = left
+        else:
+            Hc[np.ix_(bleft, bright)] = right
     Sep = np.double(np.sum(Hc.T, axis=0) == 0)
     Sep[np.logical_and(np.sum(Hc, axis=0) == 0, kb > 1)] = 2
     return (Hc, Sep)
+
 
 def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
     N = Dpm.shape[0]
     kvec = np.int32(np.unique(Tc))
     LabelVec1 = np.arange(0, N)
-    E = sp.csr_matrix((np.ones(N), (np.arange(0, N), np.int32(Tc))), shape=(N, np.int32(np.max(Tc) + 1))).toarray()
+    E = sp.csr_matrix(
+        (np.ones(N), (np.arange(0, N), np.int32(Tc))),
+        shape=(N, np.int32(np.max(Tc) + 1)),
+    ).toarray()
     Z = np.empty((0, 3))
     for n in range(0, len(kvec)):
         Mc = E[:, kvec[n]].reshape(-1, 1) * Mv
@@ -361,9 +391,13 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
                 LabelVec2 = LabelVec1.copy()
                 for v in range(0, len(V) - 1):
                     PairLink, _ = LinkageFunction(dpm, LabelVec)
-                    LabelVec[np.logical_or(LabelVec == PairLink[0], LabelVec == PairLink[1])] = np.max(LabelVec1) + 1
+                    LabelVec[
+                        np.logical_or(LabelVec == PairLink[0], LabelVec == PairLink[1])
+                    ] = np.max(LabelVec1) + 1
                     LabelVec2[V] = LabelVec
-                    Z = DendroConstruct(Z, LabelVec1, LabelVec2, 1 / nc if nc > 0 else 1)
+                    Z = DendroConstruct(
+                        Z, LabelVec1, LabelVec2, 1 / nc if nc > 0 else 1
+                    )
                     nc -= 1
                     LabelVec1 = LabelVec2.copy()
         _, V, _ = sp.find(E[:, kvec[n]] != 0)
@@ -372,7 +406,9 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
             LabelVec2 = LabelVec1.copy()
             for b in range(0, len(Bub) - 1):
                 PairLink, _ = LinkageFunction(dpm, LabelVec)
-                LabelVec[np.logical_or(LabelVec == PairLink[0], LabelVec == PairLink[1])] = np.max(LabelVec1) + 1
+                LabelVec[
+                    np.logical_or(LabelVec == PairLink[0], LabelVec == PairLink[1])
+                ] = np.max(LabelVec1) + 1
                 LabelVec2[V] = LabelVec
                 Z = DendroConstruct(Z, LabelVec1, LabelVec2, 1 / nc if nc > 0 else 1)
                 nc -= 1
@@ -381,13 +417,16 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
     dcl = np.ones(len(LabelVec1))
     for n in range(0, len(kvec) - 1):
         PairLink, _ = LinkageFunction(Dpm, LabelVec1)
-        LabelVec2[np.logical_or(LabelVec1 == PairLink[0], LabelVec1 == PairLink[1])] = np.max(LabelVec1) + 1
+        LabelVec2[np.logical_or(LabelVec1 == PairLink[0], LabelVec1 == PairLink[1])] = (
+            np.max(LabelVec1) + 1
+        )
         dvu = dcl[LabelVec1 == PairLink[0]][0] + dcl[LabelVec1 == PairLink[1]][0]
         dcl[np.logical_or(LabelVec1 == PairLink[0], LabelVec1 == PairLink[1])] = dvu
         Z = DendroConstruct(Z, LabelVec1, LabelVec2, dvu)
         LabelVec1 = LabelVec2.copy()
     Z[:, 0:2] += 1
     return from_mlab_linkage(Z)
+
 
 def LinkageFunction(d, labelvec):
     lvec = np.unique(labelvec)
@@ -403,6 +442,7 @@ def LinkageFunction(d, labelvec):
     imn = np.argmin(Links[:, 2])
     return (Links[imn, 0:2], Links[imn, 2])
 
+
 def BubbleMember(Dpm, Rpm, Mv, Mc):
     Mvv = np.zeros(Mv.shape)
     _, vu, _ = sp.find(np.sum(Mc.T, axis=0) > 1)
@@ -415,6 +455,9 @@ def BubbleMember(Dpm, Rpm, Mv, Mc):
         Mvv[vu[n], bub[np.argmax(vu_bub / all_bub)]] = 1
     return Mvv
 
+
 def DendroConstruct(Zi, LabelVec1, LabelVec2, LinkageDist):
-    indx = (LabelVec1 != LabelVec2)
-    return np.vstack((Zi, np.hstack((np.sort(np.unique(LabelVec1[indx])), LinkageDist))))
+    indx = LabelVec1 != LabelVec2
+    return np.vstack(
+        (Zi, np.hstack((np.sort(np.unique(LabelVec1[indx])), LinkageDist)))
+    )

@@ -11,13 +11,14 @@ class ConvexOptimizer:
     Unified Convex Optimization Model for Portfolio Analytics.
     Dispatches to different Risk Models using the Strategy Pattern.
     """
+
     def __init__(
         self,
         moments: dict[str, Any],
         constraints: dict[str, Any],
         objectives: list[dict[str, Any]],
         R: np.ndarray | None = None,
-        **kwargs
+        **kwargs,
     ):
         self.moments = moments
         self.constraints = constraints
@@ -66,7 +67,6 @@ class ConvexOptimizer:
         if c.get("div_target") is not None:
             self.add_constraint(cp.sum_squares(w) <= 1.0 - c["div_target"])
 
-
         # 6.5 Group Constraints
         if c.get("groups") is not None:
             groups = c["groups"]
@@ -74,7 +74,10 @@ class ConvexOptimizer:
             group_max = c.get("group_max")
             asset_names = list(c["min"].index)
             for i, group in enumerate(groups):
-                indices = [asset_names.index(item) if isinstance(item, str) else item for item in group]
+                indices = [
+                    asset_names.index(item) if isinstance(item, str) else item
+                    for item in group
+                ]
                 if group_min is not None:
                     self.add_constraint(cp.sum(w[indices]) >= group_min[i])
                 if group_max is not None:
@@ -182,22 +185,33 @@ class ConvexOptimizer:
             ret_target = return_obj.get("target")
             if ret_target is not None:
                 # If return target is specified, enforce it as constraint
-                self.add_constraint(self.w @ self.mu_robust - self.ret_uncertainty >= ret_target)
+                self.add_constraint(
+                    self.w @ self.mu_robust - self.ret_uncertainty >= ret_target
+                )
                 self.objective_terms.append(risk_term)
             else:
                 # Maximize Return - Risk Penalty
-                self.objective_terms.append(0.5 * risk_aversion * risk_term - (self.w @ self.mu_robust - self.ret_uncertainty))
+                self.objective_terms.append(
+                    0.5 * risk_aversion * risk_term
+                    - (self.w @ self.mu_robust - self.ret_uncertainty)
+                )
         elif risk_obj:
             self.objective_terms.append(risk_term)
         elif return_obj:
             ret_target = return_obj.get("target")
             if ret_target is not None:
-                self.add_constraint(self.w @ self.mu_robust - self.ret_uncertainty >= ret_target)
+                self.add_constraint(
+                    self.w @ self.mu_robust - self.ret_uncertainty >= ret_target
+                )
             mult = return_obj.get("multiplier", -1.0)
             if mult < 0:
-                self.objective_terms.append(-(self.w @ self.mu_robust - self.ret_uncertainty))
+                self.objective_terms.append(
+                    -(self.w @ self.mu_robust - self.ret_uncertainty)
+                )
             else:
-                self.objective_terms.append(self.w @ self.mu_robust - self.ret_uncertainty)
+                self.objective_terms.append(
+                    self.w @ self.mu_robust - self.ret_uncertainty
+                )
         else:
             self.objective_terms.append(cp.quad_form(self.w, self.moments["sigma"]))
 
@@ -220,7 +234,9 @@ class ConvexOptimizer:
 
 class RiskModelStrategy(ABC):
     @abstractmethod
-    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+    def build(
+        self, optimizer: ConvexOptimizer, arguments: dict[str, Any]
+    ) -> cp.Expression:
         pass
 
 
@@ -228,7 +244,10 @@ class MeanVarianceStrategy(RiskModelStrategy):
     def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
         sigma = opt.moments["sigma"]
         robust_sigma_type = opt.constraints.get("robust_sigma_type", "none")
-        if robust_sigma_type == "ellipsoidal" and opt.constraints.get("sigma_sigma") is not None:
+        if (
+            robust_sigma_type == "ellipsoidal"
+            and opt.constraints.get("sigma_sigma") is not None
+        ):
             sigma_sigma = opt.constraints["sigma_sigma"]
             k_sigma = opt.constraints.get("k_sigma", 1.0)
             G_sigma = np.linalg.cholesky(sigma_sigma).T
@@ -237,11 +256,19 @@ class MeanVarianceStrategy(RiskModelStrategy):
             E = cp.Variable((opt.n, opt.n), symmetric=True)
             sigma_risk = cp.Variable()
 
-            opt.add_constraint(cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk)
+            opt.add_constraint(
+                cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk
+            )
             opt.add_constraint(E >> 0)
 
-            L = cp.vstack([cp.hstack([W, cp.reshape(opt.w, (opt.n, 1), order="C")]),
-                           cp.hstack([cp.reshape(opt.w, (1, opt.n), order="C"), np.array([[1.0]])])])
+            L = cp.vstack(
+                [
+                    cp.hstack([W, cp.reshape(opt.w, (opt.n, 1), order="C")]),
+                    cp.hstack(
+                        [cp.reshape(opt.w, (1, opt.n), order="C"), np.array([[1.0]])]
+                    ),
+                ]
+            )
             opt.add_constraint(L >> 0)
 
             return cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
@@ -282,10 +309,10 @@ class EDaRStrategy(RiskModelStrategy):
         opt.add_constraint(cum_ret[0] == 0)
         opt.add_constraint(u[0] == 0)
         for i in range(T):
-            opt.add_constraint(cum_ret[i+1] == cum_ret[i] + opt.R[i] @ opt.w)
-            opt.add_constraint(u[i+1] >= cum_ret[i+1])
-            opt.add_constraint(u[i+1] >= u[i])
-            opt.add_constraint(d[i] == u[i+1] - cum_ret[i+1])
+            opt.add_constraint(cum_ret[i + 1] == cum_ret[i] + opt.R[i] @ opt.w)
+            opt.add_constraint(u[i + 1] >= cum_ret[i + 1])
+            opt.add_constraint(u[i + 1] >= u[i])
+            opt.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
 
         t = cp.Variable()
         z = cp.Variable(nonneg=True)
@@ -296,6 +323,7 @@ class EDaRStrategy(RiskModelStrategy):
             opt.add_constraint(cp.ExpCone(d[i] - t, z, ui[i]))
 
         return t
+
 
 class MADStrategy(RiskModelStrategy):
     def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
@@ -308,6 +336,7 @@ class MADStrategy(RiskModelStrategy):
         opt.add_constraint(y >= dev)
         opt.add_constraint(y >= -dev)
         return cp.sum(y) / T
+
 
 class SemiMADStrategy(RiskModelStrategy):
     def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
@@ -330,6 +359,7 @@ class OWAStrategy(RiskModelStrategy):
         owa_weights = arguments.get("owa_weights")
         if owa_weights is None:
             from .risk import owa_gmd_weights
+
             owa_weights = owa_gmd_weights(T)
 
         if len(owa_weights) != T:
@@ -348,7 +378,9 @@ class OWAStrategy(RiskModelStrategy):
                 opt.add_constraint(d[:, k - 1] >= losses - zeta[k - 1])
 
             top_k_sums = [(k * zeta[k - 1] + cp.sum(d[:, k - 1])) for k in range(1, T)]
-            owa_expr = cp.sum([delta_w[i] * top_k_sums[i] for i in range(T - 1)]) + owa_weights[-1] * cp.sum(losses)
+            owa_expr = cp.sum(
+                [delta_w[i] * top_k_sums[i] for i in range(T - 1)]
+            ) + owa_weights[-1] * cp.sum(losses)
         else:
             owa_expr = owa_weights[0] * (-opt.R @ opt.w)
 
@@ -386,7 +418,9 @@ class RLVaRStrategy(RiskModelStrategy):
         scale = 100.0
         losses = -(opt.R * scale) @ opt.w
 
-        ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
+        ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (
+            2 * kappa
+        )
 
         opt.add_constraint(losses - t + epsilon + omega <= 0)
 
@@ -400,6 +434,7 @@ class RLVaRStrategy(RiskModelStrategy):
         opt.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
 
         return (t + z * ln_k + cp.sum(psi + theta)) / scale
+
 
 class RLDaRStrategy(RiskModelStrategy):
     def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
@@ -418,10 +453,12 @@ class RLDaRStrategy(RiskModelStrategy):
         opt.add_constraint(cum_ret[0] == 0)
         opt.add_constraint(u[0] == 0)
         for i in range(T):
-            opt.add_constraint(cum_ret[i+1] == cum_ret[i] + (opt.R[i] * scale) @ opt.w)
-            opt.add_constraint(u[i+1] >= cum_ret[i+1])
-            opt.add_constraint(u[i+1] >= u[i])
-            opt.add_constraint(d[i] == u[i+1] - cum_ret[i+1])
+            opt.add_constraint(
+                cum_ret[i + 1] == cum_ret[i] + (opt.R[i] * scale) @ opt.w
+            )
+            opt.add_constraint(u[i + 1] >= cum_ret[i + 1])
+            opt.add_constraint(u[i + 1] >= u[i])
+            opt.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
 
         t_rlvar = cp.Variable()
         z_rlvar = cp.Variable(nonneg=True)
@@ -430,7 +467,9 @@ class RLDaRStrategy(RiskModelStrategy):
         epsilon = cp.Variable(T)
         omega = cp.Variable(T)
 
-        ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
+        ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (
+            2 * kappa
+        )
         opt.add_constraint(d - t_rlvar + epsilon + omega <= 0)
 
         x1 = cp.vstack([z_rlvar * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
@@ -443,6 +482,7 @@ class RLDaRStrategy(RiskModelStrategy):
         opt.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
 
         return (t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)) / scale
+
 
 class CVaRStrategy(RiskModelStrategy):
     def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
@@ -461,8 +501,8 @@ class CVaRStrategy(RiskModelStrategy):
         opt.add_constraint(u >= 0)
         return t + cp.sum(u) / (T * alpha)
 
+
 RISK_STRATEGIES["RLVaR"] = RLVaRStrategy
 RISK_STRATEGIES["RLDaR"] = RLDaRStrategy
 RISK_STRATEGIES["CVaR"] = CVaRStrategy
 RISK_STRATEGIES["ES"] = CVaRStrategy
-
