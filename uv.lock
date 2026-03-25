@@ -1513,12 +1513,14 @@ source = { editable = "." }
 dependencies = [
     { name = "cvxopt" },
     { name = "cvxpy" },
+    { name = "kaleido" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "pyscipopt" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "yfinance" },
 ]
 
 [package.dev-dependencies]
@@ -1537,12 +1539,14 @@ dev = [
 requires-dist = [
     { name = "cvxopt", specifier = ">=1.3.3" },
     { name = "cvxpy", specifier = ">=1.8.1" },
+    { name = "kaleido", specifier = ">=1.2.0" },
     { name = "numpy", specifier = ">=2.4.2" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "plotly", specifier = ">=6.6.0" },
     { name = "pyscipopt", specifier = ">=6.1.0" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "scipy", specifier = ">=1.17.1" },
+    { name = "yfinance", specifier = ">=1.2.0" },
 ]
 
 [package.metadata.requires-dev]
