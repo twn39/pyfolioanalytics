@@ -74,12 +74,18 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+        codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
+
         
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
+        
+        dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
+
     
     clustering = kwargs.get("clustering", "linkage")
     
@@ -112,12 +118,18 @@ def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+        codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
+
         
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
+        
+        dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
+
     
     clustering = kwargs.get("clustering", "linkage")
     
@@ -151,12 +163,18 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+        codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
+
         
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
+        
+        dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
+        dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
+
 
     clustering = kwargs.get("clustering", "linkage")
 
