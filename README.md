@@ -65,6 +65,7 @@
 
 欢迎查阅模块化的详细开发与使用文档（包含核心数学原理说明及丰富的代码示例）：
 
+0. **[构建与验证量化投资组合的标准流程](docs/workflow.md)** - 强烈建议初学者阅读！
 1. [组合规格定义 (Portfolio Specification)](docs/portfolio_specification.md) - `portfolio.py`
 2. [参数与矩估计 (Parameter Estimation)](docs/parameter_estimation.md) - `moments.py`, `rmt.py`
 3. [风险度量与测度 (Risk Measures)](docs/risk_measures.md) - `risk.py`
