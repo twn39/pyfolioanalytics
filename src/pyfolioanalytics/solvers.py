@@ -331,13 +331,30 @@ def solve_nonlinear(
                 val = p_var if name == "var" else np.sqrt(p_var)
                 out += mult * val
             if obj["type"] == "risk_budget":
-                p_var = float(np.dot(w.T, np.dot(sigma, w)))
-                if p_var <= 1e-14:
-                    return 1e10
-                rc = w * np.dot(sigma, w) / p_var
-                # Adaptive penalty: scales with 1/p_var so it stays well-conditioned
-                # regardless of whether returns are in % or decimal form.
-                penalty_scale = 1.0 / p_var
+                if name in ["StdDev", "Variance"]:
+                    p_var = float(np.dot(w.T, np.dot(sigma, w)))
+                    if p_var <= 1e-14:
+                        return 1e10
+                    rc = w * np.dot(sigma, w) / p_var
+                    penalty_scale = 1.0 / p_var
+                else:
+                    if R is None:
+                        raise ValueError(f"Historical returns R must be provided for alternative risk parity using {name}")
+                    from .risk import numerical_risk_contribution
+                    import pyfolioanalytics.risk as pr
+                    func = getattr(pr, name, None)
+                    if not func:
+                        raise ValueError(f"Unsupported alternative risk measure: {name}")
+                    
+                    obj_args = obj.get("arguments", {})
+                    # Calculate numerical risk contribution
+                    rc_abs = numerical_risk_contribution(w, R, func, **obj_args)
+                    sum_rc = np.sum(rc_abs)
+                    if sum_rc <= 1e-14:
+                        return 1e10
+                    rc = rc_abs / sum_rc
+                    penalty_scale = 1e4  # Scale up for non-variance measures to enforce strict penalty
+                
                 if obj.get("min_concentration") or obj.get("min_difference"):
                     target = np.full(n, 1.0 / n)
                     out += penalty_scale * np.sum((rc - target) ** 2)
@@ -361,7 +378,7 @@ def solve_nonlinear(
         )
 
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
-    minimize_opts = {"ftol": 1e-12, "maxiter": 1000}
+    minimize_opts = {"ftol": 1e-7, "maxiter": 1000}
 
     # Multi-start restarts: ERC is well-posed but SLSQP can get stuck for
     # highly correlated assets.  5 Dirichlet draws cover the simplex better.
@@ -386,7 +403,7 @@ def solve_nonlinear(
         best_res = res  # Last attempt even if unsuccessful
 
     return {
-        "status": "optimal" if best_res.success else best_res.message,
+        "status": "optimal" if best_res.success else ("optimal_inaccurate" if best_res.x is not None else "failed"),
         "weights": best_res.x if best_res.success else None,
         "obj_value": best_res.fun,
     }

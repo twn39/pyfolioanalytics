@@ -464,3 +464,44 @@ def owa_cvar_weights(T: int, p: float = 0.05) -> np.ndarray:
     w[: k - 1] = 1 / (alpha * T)
     w[k - 1] = (alpha * T - (k - 1)) / (alpha * T)
     return w
+
+
+def numerical_risk_contribution(weights: np.ndarray, R: np.ndarray, risk_func, **kwargs) -> np.ndarray:
+    """
+    Compute the marginal risk contribution of any risk measure using numerical differentiation (Euler's theorem).
+    """
+    eps = 1e-6
+    n = len(weights)
+    grad = np.zeros(n)
+    
+    for i in range(n):
+        w_plus = weights.copy()
+        w_plus[i] += eps
+        r_plus = risk_func(w_plus, R, **kwargs)
+        
+        w_minus = weights.copy()
+        w_minus[i] -= eps
+        r_minus = risk_func(w_minus, R, **kwargs)
+        
+        grad[i] = (r_plus - r_minus) / (2 * eps)
+        
+    rc = weights * grad
+    
+    # Optional scaling to exact risk value to fix floating point drift
+    total_risk = risk_func(weights, R, **kwargs)
+    sum_rc = np.sum(rc)
+    if abs(sum_rc) > 1e-12 and abs(total_risk) > 1e-12:
+        rc = rc * (total_risk / sum_rc)
+        
+    return rc
+
+
+def CVaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
+    """Historical Conditional Value at Risk (Expected Shortfall)."""
+    port_returns = R @ weights
+    var_threshold = np.percentile(port_returns, 100 * (1 - p))
+    # Average of returns below the VaR threshold
+    tail_returns = port_returns[port_returns <= var_threshold]
+    if len(tail_returns) == 0:
+        return -var_threshold
+    return -np.mean(tail_returns)

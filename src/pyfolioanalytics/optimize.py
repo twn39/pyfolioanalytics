@@ -109,10 +109,27 @@ def calculate_objective_measures(
                     te_var = np.dot(diff.T, np.dot(sigma, diff))
                     measures["tracking_error"] = np.sqrt(max(0, float(te_var)))
 
-        if obj_type == "risk_budget" and sigma is not None:
-            rc = risk_contribution(weights, sigma)
+        if obj_type == "risk_budget":
+            if obj_name in ["StdDev", "Variance"] and sigma is not None:
+                rc = risk_contribution(weights, sigma)
+            else:
+                from .risk import numerical_risk_contribution
+                import pyfolioanalytics.risk as pr
+                func = getattr(pr, obj_name, None)
+                if func is None:
+                    # Fallback to StdDev if not found or something else
+                    rc = risk_contribution(weights, sigma) if sigma is not None else np.zeros_like(weights)
+                else:
+                    if R is None:
+                        raise ValueError(f"Historical returns R must be provided for alternative risk parity using {obj_name}")
+                    rc = numerical_risk_contribution(weights, R, func, **obj_args)
+            
             measures["risk_contribution_" + obj_name] = rc
-            measures["pct_contrib_" + obj_name] = rc / np.sum(rc)
+            sum_rc = np.sum(rc)
+            if sum_rc > 1e-12:
+                measures["pct_contrib_" + obj_name] = rc / sum_rc
+            else:
+                measures["pct_contrib_" + obj_name] = np.zeros_like(rc)
 
     if constraints is not None:
         if "weight_initial" in constraints and "ptc" in constraints:
