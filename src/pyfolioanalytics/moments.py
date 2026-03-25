@@ -224,7 +224,7 @@ def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, 
         y = R_centered[:, i] * scale_factor
 
         # Fit GARCH(1,1)
-        model = arch_model(y, vol="Garch", p=1, q=1, mean="Zero", dist="Normal")
+        model = arch_model(y, vol="GARCH", p=1, q=1, mean="Zero", dist="normal")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             res = model.fit(disp="off", show_warning=False)

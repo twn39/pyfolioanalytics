@@ -205,11 +205,15 @@ class Portfolio:
     def get_constraints(self) -> dict[str, Any]:
         asset_names = list(self.assets.keys())
         len(asset_names)
-        res = {
+        res: dict[str, Any] = {
             "min_sum": -np.inf,
             "max_sum": np.inf,
             "min": pd.Series(-np.inf, index=asset_names),
             "max": pd.Series(np.inf, index=asset_names),
+            "linear_A": [],
+            "linear_b": [],
+            "linear_A_eq": [],
+            "linear_b_eq": [],
         }
         for constr in self.constraints:
             if not constr.get("enabled", True):
@@ -293,7 +297,7 @@ class MultLayerPortfolio:
         self.root = root_portfolio
         self.sub_portfolios = {}
 
-    def add_sub_portfolio(self, meta_asset_name: str, sub_portfolio: Portfolio):
+    def add_sub_portfolio(self, meta_asset_name: str, sub_portfolio: 'Portfolio | MultLayerPortfolio'):
         if meta_asset_name not in self.root.assets:
             raise ValueError(
                 f"'{meta_asset_name}' must be defined as an asset in the root portfolio."

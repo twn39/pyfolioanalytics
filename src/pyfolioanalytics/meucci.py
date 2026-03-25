@@ -65,9 +65,9 @@ def entropy_prog(
 
         exponent = np.zeros((J, 1))
         if lam is not None:
-            exponent -= A.T @ lam
+            exponent -= np.asarray(A).T @ lam
         if v is not None:
-            exponent -= Aeq.T @ v
+            exponent -= np.asarray(Aeq).T @ v
 
         log_p = np.log(np.maximum(p, 1e-32))
         x_p = np.exp(log_p - 1 + exponent)
@@ -77,9 +77,9 @@ def entropy_prog(
         # So we minimize -L = sum(x_p) + lam'b + v'beq
         obj = np.sum(x_p)
         if lam is not None:
-            obj += (lam.T @ b.reshape(-1, 1))[0, 0]
+            obj += (lam.T @ np.asarray(b).reshape(-1, 1))[0, 0]
         if v is not None:
-            obj += (v.T @ beq.reshape(-1, 1))[0, 0]
+            obj += (v.T @ np.asarray(beq).reshape(-1, 1))[0, 0]
 
         return obj
 
@@ -89,9 +89,9 @@ def entropy_prog(
 
         exponent = np.zeros((J, 1))
         if lam is not None:
-            exponent -= A.T @ lam
+            exponent -= np.asarray(A).T @ lam
         if v is not None:
-            exponent -= Aeq.T @ v
+            exponent -= np.asarray(Aeq).T @ v
 
         log_p = np.log(np.maximum(p, 1e-32))
         x_p = np.exp(log_p - 1 + exponent)
@@ -100,10 +100,10 @@ def entropy_prog(
         # Grad of -L w.r.t lam: -(A*x_p - b) = b - A*x_p
         # Grad of -L w.r.t v: -(Aeq*x_p - beq) = beq - Aeq*x_p
         grad = []
-        if lam is not None:
-            grad.append((b.reshape(-1, 1) - A @ x_p).flatten())
-        if v is not None:
-            grad.append((beq.reshape(-1, 1) - Aeq @ x_p).flatten())
+        if lam is not None and b is not None:
+            grad.append((np.asarray(b).reshape(-1, 1) - np.asarray(A) @ x_p).flatten())
+        if v is not None and beq is not None:
+            grad.append((np.asarray(beq).reshape(-1, 1) - np.asarray(Aeq) @ x_p).flatten())
 
         return np.concatenate(grad)
 
@@ -132,9 +132,9 @@ def entropy_prog(
 
     exponent = np.zeros((J, 1))
     if lam is not None:
-        exponent -= A.T @ lam
+        exponent -= np.asarray(A).T @ lam
     if v is not None:
-        exponent -= Aeq.T @ v
+        exponent -= np.asarray(Aeq).T @ v
 
     log_p = np.log(np.maximum(p, 1e-32))
     p_post = np.exp(log_p - 1 + exponent)

@@ -21,7 +21,7 @@ def test_shrinkage_identity_cv(stocks_data):
     # Riskfolio-Lib's 'ledoit' actually shrinks towards the identity matrix (Ledoit and Wolf 2004)
     rp_port = rp.Portfolio(returns=R)
     rp_port.assets_stats(method_mu="hist", method_cov="ledoit")
-    rp_sigma = rp_port.cov.values
+    rp_sigma = getattr(rp_port.cov, 'values', rp_port.cov)
 
     # Note: Riskfolio-Lib scales covariance differently internally (annualized or empirical adjustment)
     # We test for matrix correlation parity (the structure of the shrinkage should be identical)

@@ -241,45 +241,45 @@ class RiskModelStrategy(ABC):
 
 
 class MeanVarianceStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        sigma = opt.moments["sigma"]
-        robust_sigma_type = opt.constraints.get("robust_sigma_type", "none")
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        sigma = optimizer.moments["sigma"]
+        robust_sigma_type = optimizer.constraints.get("robust_sigma_type", "none")
         if (
             robust_sigma_type == "ellipsoidal"
-            and opt.constraints.get("sigma_sigma") is not None
+            and optimizer.constraints.get("sigma_sigma") is not None
         ):
-            sigma_sigma = opt.constraints["sigma_sigma"]
-            k_sigma = opt.constraints.get("k_sigma", 1.0)
+            sigma_sigma = optimizer.constraints["sigma_sigma"]
+            k_sigma = optimizer.constraints.get("k_sigma", 1.0)
             G_sigma = np.linalg.cholesky(sigma_sigma).T
 
-            W = cp.Variable((opt.n, opt.n), symmetric=True)
-            E = cp.Variable((opt.n, opt.n), symmetric=True)
+            W = cp.Variable((optimizer.n, optimizer.n), symmetric=True)
+            E = cp.Variable((optimizer.n, optimizer.n), symmetric=True)
             sigma_risk = cp.Variable()
 
-            opt.add_constraint(
+            optimizer.add_constraint(
                 cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk
             )
-            opt.add_constraint(E >> 0)
+            optimizer.add_constraint(E >> 0)
 
             L = cp.vstack(
                 [
-                    cp.hstack([W, cp.reshape(opt.w, (opt.n, 1), order="C")]),
+                    cp.hstack([W, cp.reshape(optimizer.w, (optimizer.n, 1), order="C")]),
                     cp.hstack(
-                        [cp.reshape(opt.w, (1, opt.n), order="C"), np.array([[1.0]])]
+                        [cp.reshape(optimizer.w, (1, optimizer.n), order="C"), np.array([[1.0]])]
                     ),
                 ]
             )
-            opt.add_constraint(L >> 0)
+            optimizer.add_constraint(L >> 0)
 
             return cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
-        return cp.quad_form(opt.w, sigma)
+        return cp.quad_form(optimizer.w, sigma)
 
 
 class EVaRStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("EVaR requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         p = arguments.get("p", 0.95)
         alpha = 1.0 - p
 
@@ -287,18 +287,18 @@ class EVaRStrategy(RiskModelStrategy):
         z = cp.Variable(nonneg=True)
         ui = cp.Variable(T)
 
-        opt.add_constraint(cp.sum(ui) <= T * alpha * z)
+        optimizer.add_constraint(cp.sum(ui) <= T * alpha * z)
         for i in range(T):
-            opt.add_constraint(cp.ExpCone(-opt.R[i] @ opt.w - t, z, ui[i]))
+            optimizer.add_constraint(cp.ExpCone(-optimizer.R[i] @ optimizer.w - t, z, ui[i]))
 
         return t
 
 
 class EDaRStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("EDaR requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         p = arguments.get("p", 0.95)
         alpha = 1.0 - p
 
@@ -306,56 +306,56 @@ class EDaRStrategy(RiskModelStrategy):
         cum_ret = cp.Variable(T + 1)
         d = cp.Variable(T)
 
-        opt.add_constraint(cum_ret[0] == 0)
-        opt.add_constraint(u[0] == 0)
+        optimizer.add_constraint(cum_ret[0] == 0)
+        optimizer.add_constraint(u[0] == 0)
         for i in range(T):
-            opt.add_constraint(cum_ret[i + 1] == cum_ret[i] + opt.R[i] @ opt.w)
-            opt.add_constraint(u[i + 1] >= cum_ret[i + 1])
-            opt.add_constraint(u[i + 1] >= u[i])
-            opt.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
+            optimizer.add_constraint(cum_ret[i + 1] == cum_ret[i] + optimizer.R[i] @ optimizer.w)
+            optimizer.add_constraint(u[i + 1] >= cum_ret[i + 1])
+            optimizer.add_constraint(u[i + 1] >= u[i])
+            optimizer.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
 
         t = cp.Variable()
         z = cp.Variable(nonneg=True)
         ui = cp.Variable(T)
 
-        opt.add_constraint(cp.sum(ui) <= T * alpha * z)
+        optimizer.add_constraint(cp.sum(ui) <= T * alpha * z)
         for i in range(T):
-            opt.add_constraint(cp.ExpCone(d[i] - t, z, ui[i]))
+            optimizer.add_constraint(cp.ExpCone(d[i] - t, z, ui[i]))
 
         return t
 
 
 class MADStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("MAD requires historical returns R.")
-        mu_vec = np.mean(opt.R, axis=0)
-        T = opt.T
+        mu_vec = np.mean(optimizer.R, axis=0)
+        T = optimizer.T
         y = cp.Variable(T)
-        dev = opt.R @ opt.w - mu_vec @ opt.w
-        opt.add_constraint(y >= dev)
-        opt.add_constraint(y >= -dev)
+        dev = optimizer.R @ optimizer.w - mu_vec @ optimizer.w
+        optimizer.add_constraint(y >= dev)
+        optimizer.add_constraint(y >= -dev)
         return cp.sum(y) / T
 
 
 class SemiMADStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("semi_MAD requires historical returns R.")
-        mu_vec = np.mean(opt.R, axis=0)
-        T = opt.T
+        mu_vec = np.mean(optimizer.R, axis=0)
+        T = optimizer.T
         y = cp.Variable(T)
-        dev = opt.R @ opt.w - mu_vec @ opt.w
-        opt.add_constraint(y >= -dev)
-        opt.add_constraint(y >= 0)
+        dev = optimizer.R @ optimizer.w - mu_vec @ optimizer.w
+        optimizer.add_constraint(y >= -dev)
+        optimizer.add_constraint(y >= 0)
         return cp.sum(y) / T
 
 
 class OWAStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("OWA requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         owa_weights = arguments.get("owa_weights")
         if owa_weights is None:
             from .risk import owa_gmd_weights
@@ -373,16 +373,16 @@ class OWAStrategy(RiskModelStrategy):
         if T > 1:
             zeta = cp.Variable(T - 1)
             d = cp.Variable((T, T - 1), nonneg=True)
-            losses = -opt.R @ opt.w
+            losses = -optimizer.R @ optimizer.w
             for k in range(1, T):
-                opt.add_constraint(d[:, k - 1] >= losses - zeta[k - 1])
+                optimizer.add_constraint(d[:, k - 1] >= losses - zeta[k - 1])
 
             top_k_sums = [(k * zeta[k - 1] + cp.sum(d[:, k - 1])) for k in range(1, T)]
             owa_expr = cp.sum(
                 [delta_w[i] * top_k_sums[i] for i in range(T - 1)]
             ) + owa_weights[-1] * cp.sum(losses)
         else:
-            owa_expr = owa_weights[0] * (-opt.R @ opt.w)
+            owa_expr = owa_weights[0] * (-optimizer.R @ optimizer.w)
 
         return owa_expr
 
@@ -400,10 +400,10 @@ RISK_STRATEGIES: dict[str, type[RiskModelStrategy]] = {
 
 
 class RLVaRStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("RLVaR requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         alpha_p = arguments.get("p", 0.95)
         kappa = arguments.get("kappa", 0.3)
         alpha = 1.0 - alpha_p
@@ -416,31 +416,31 @@ class RLVaRStrategy(RiskModelStrategy):
         omega = cp.Variable(T)
 
         scale = 100.0
-        losses = -(opt.R * scale) @ opt.w
+        losses = -(optimizer.R * scale) @ optimizer.w
 
         ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (
             2 * kappa
         )
 
-        opt.add_constraint(losses - t + epsilon + omega <= 0)
+        optimizer.add_constraint(losses - t + epsilon + omega <= 0)
 
         x1 = cp.vstack([z * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
         y1 = psi * (1 + kappa) / kappa
-        opt.add_constraint(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
+        optimizer.add_constraint(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
 
         x2 = omega / (1 - kappa)
         y2 = theta / kappa
         z2 = cp.vstack([-z / (2 * kappa)] * T).flatten(order="C")
-        opt.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
+        optimizer.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
 
         return (t + z * ln_k + cp.sum(psi + theta)) / scale
 
 
 class RLDaRStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("RLDaR requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         alpha_p = arguments.get("p", 0.95)
         kappa = arguments.get("kappa", 0.3)
         alpha = 1.0 - alpha_p
@@ -450,15 +450,15 @@ class RLDaRStrategy(RiskModelStrategy):
         cum_ret = cp.Variable(T + 1)
         d = cp.Variable(T)
 
-        opt.add_constraint(cum_ret[0] == 0)
-        opt.add_constraint(u[0] == 0)
+        optimizer.add_constraint(cum_ret[0] == 0)
+        optimizer.add_constraint(u[0] == 0)
         for i in range(T):
-            opt.add_constraint(
-                cum_ret[i + 1] == cum_ret[i] + (opt.R[i] * scale) @ opt.w
+            optimizer.add_constraint(
+                cum_ret[i + 1] == cum_ret[i] + (optimizer.R[i] * scale) @ optimizer.w
             )
-            opt.add_constraint(u[i + 1] >= cum_ret[i + 1])
-            opt.add_constraint(u[i + 1] >= u[i])
-            opt.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
+            optimizer.add_constraint(u[i + 1] >= cum_ret[i + 1])
+            optimizer.add_constraint(u[i + 1] >= u[i])
+            optimizer.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
 
         t_rlvar = cp.Variable()
         z_rlvar = cp.Variable(nonneg=True)
@@ -470,25 +470,25 @@ class RLDaRStrategy(RiskModelStrategy):
         ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (
             2 * kappa
         )
-        opt.add_constraint(d - t_rlvar + epsilon + omega <= 0)
+        optimizer.add_constraint(d - t_rlvar + epsilon + omega <= 0)
 
         x1 = cp.vstack([z_rlvar * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
         y1 = psi * (1 + kappa) / kappa
-        opt.add_constraint(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
+        optimizer.add_constraint(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
 
         x2 = omega / (1 - kappa)
         y2 = theta / kappa
         z2 = cp.vstack([-z_rlvar / (2 * kappa)] * T).flatten(order="C")
-        opt.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
+        optimizer.add_constraint(cp.PowCone3D(x2, y2, z2, 1 - kappa))
 
         return (t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)) / scale
 
 
 class CVaRStrategy(RiskModelStrategy):
-    def build(self, opt: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
-        if opt.R is None:
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
             raise ValueError("CVaR/ES requires historical returns R.")
-        T = opt.T
+        T = optimizer.T
         p = arguments.get("p", 0.95)
         alpha = 1.0 - p
 
@@ -496,9 +496,9 @@ class CVaRStrategy(RiskModelStrategy):
         u = cp.Variable(T)
 
         for i in range(T):
-            opt.add_constraint(u[i] >= -opt.R[i] @ opt.w - t)
+            optimizer.add_constraint(u[i] >= -optimizer.R[i] @ optimizer.w - t)
 
-        opt.add_constraint(u >= 0)
+        optimizer.add_constraint(u >= 0)
         return t + cp.sum(u) / (T * alpha)
 
 

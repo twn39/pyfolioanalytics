@@ -40,7 +40,7 @@ def PMFG_T2s(W, nargout=3):
     s = np.sum(W * (W > np.mean(W)), axis=1)
     j = np.int32(np.argsort(s)[::-1].reshape(-1))
 
-    in_v[0:4] = j[0:4]
+    in_v[0:4] = [int(x) for x in j[0:4]]
     ou_v = np.setdiff1d(np.arange(0, N), in_v)
     tri[0, :] = in_v[[0, 1, 2]]
     tri[1, :] = in_v[[1, 2, 3]]
@@ -350,14 +350,14 @@ def DirectHb(Rpm, Hb, Mb, Mv, CliqList):
     CliqEdge = np.int32(CliqEdge)
     for n in range(0, CliqEdge.shape[0]):
         Temp = Hb_temp.copy()
-        Temp[CliqEdge[n, 0], CliqEdge[n, 1]] = 0
-        Temp[CliqEdge[n, 1], CliqEdge[n, 0]] = 0
+        Temp[int(CliqEdge[n, 0]), int(CliqEdge[n, 1])] = 0
+        Temp[int(CliqEdge[n, 1]), int(CliqEdge[n, 0])] = 0
         d, _ = breadth(Temp, 0)
         d[np.isinf(d)] = -1
         d[0] = 0
-        vo = np.int32(CliqList[CliqEdge[n, 2], :])
-        bleft = CliqEdge[n, 0:2][d[CliqEdge[n, 0:2]] != -1]
-        bright = CliqEdge[n, 0:2][d[CliqEdge[n, 0:2]] == -1]
+        vo = np.int32(CliqList[int(CliqEdge[n, 2]), :])
+        bleft = CliqEdge[n, 0:2][d[[int(x) for x in CliqEdge[n, 0:2]]] != -1]
+        bright = CliqEdge[n, 0:2][d[[int(x) for x in CliqEdge[n, 0:2]]] == -1]
         vleft = np.setdiff1d(np.argwhere(Mv[:, d != -1] != 0)[:, 0], vo)
         vright = np.setdiff1d(np.argwhere(Mv[:, d == -1] != 0)[:, 0], vo)
         left, right = np.sum(Rpm[np.ix_(vo, vleft)]), np.sum(Rpm[np.ix_(vo, vright)])
@@ -379,13 +379,13 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
         shape=(N, np.int32(np.max(Tc) + 1)),
     ).toarray()
     Z = np.empty((0, 3))
-    for n in range(0, len(kvec)):
-        Mc = E[:, kvec[n]].reshape(-1, 1) * Mv
+    for n in range(0, kvec.shape[0]):
+        Mc = E[:, int(kvec[n])].reshape(-1, 1) * Mv
         Mvv = BubbleMember(Dpm, Rpm, Mv, Mc)
         _, Bub, _ = sp.find(np.sum(Mvv, axis=0) > 0)
-        nc = np.sum(Tc == kvec[n]) - 1
-        for m in range(0, len(Bub)):
-            _, V, _ = sp.find(Mvv[:, Bub[m]] != 0)
+        nc = np.sum(Tc == int(kvec[n])) - 1
+        for m in range(0, Bub.shape[0]):
+            _, V, _ = sp.find(Mvv[:, int(Bub[m])] != 0)
             if len(V) > 1:
                 dpm, LabelVec = Dpm[np.ix_(V, V)], LabelVec1[V]
                 LabelVec2 = LabelVec1.copy()
@@ -400,11 +400,11 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
                     )
                     nc -= 1
                     LabelVec1 = LabelVec2.copy()
-        _, V, _ = sp.find(E[:, kvec[n]] != 0)
-        if len(Bub) > 1:
+        _, V, _ = sp.find(E[:, int(kvec[n])] != 0)
+        if Bub.shape[0] > 1:
             dpm, LabelVec = Dpm[np.ix_(V, V)], LabelVec1[V]
             LabelVec2 = LabelVec1.copy()
-            for b in range(0, len(Bub) - 1):
+            for b in range(0, Bub.shape[0] - 1):
                 PairLink, _ = LinkageFunction(dpm, LabelVec)
                 LabelVec[
                     np.logical_or(LabelVec == PairLink[0], LabelVec == PairLink[1])
@@ -415,7 +415,7 @@ def HierarchyConstruct4s(Rpm, Dpm, Tc, Adjv, Mv):
                 LabelVec1 = LabelVec2.copy()
     LabelVec2 = LabelVec1.copy()
     dcl = np.ones(len(LabelVec1))
-    for n in range(0, len(kvec) - 1):
+    for n in range(0, kvec.shape[0] - 1):
         PairLink, _ = LinkageFunction(Dpm, LabelVec1)
         LabelVec2[np.logical_or(LabelVec1 == PairLink[0], LabelVec1 == PairLink[1])] = (
             np.max(LabelVec1) + 1

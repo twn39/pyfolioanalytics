@@ -26,7 +26,7 @@ def test_hrp_distance_correlation_cv(stocks_data):
     from pyfolioanalytics.codependence import get_codependence_matrix
 
     py_dcor = get_codependence_matrix(stocks_data, method="distance")
-    np.testing.assert_allclose(py_dcor, port.codep.values, atol=1e-7)
+    np.testing.assert_allclose(py_dcor, np.asarray(getattr(port.codep, 'values', port.codep)), atol=1e-7)
 
     # 2. Weight parity check
     # Note: Tolerance is loosened because Riskfolio-Lib's leaf_order implementation

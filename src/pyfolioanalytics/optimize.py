@@ -160,7 +160,7 @@ def calculate_objective_measures(
 
 
 def optimize_portfolio(
-    R: pd.DataFrame, portfolio: Portfolio, optimize_method: str = "ROI", **kwargs
+    R: pd.DataFrame, portfolio: Portfolio | Any, optimize_method: str = "ROI", **kwargs
 ) -> dict[str, Any]:
     # 1. Dispatch Multi-Layer
     if (
@@ -330,7 +330,7 @@ def optimize_portfolio(
             from .risk import owa_l_moment_crm_weights
 
             w_owa = owa_l_moment_crm_weights(
-                R.shape[0], **risk_obj.get("arguments", {})
+                R.shape[0], **risk_obj.get("arguments", {}) if risk_obj and risk_obj.get("arguments") else {}
             )
             opt_portfolio = copy.deepcopy(portfolio)
             for o in opt_portfolio.objectives:

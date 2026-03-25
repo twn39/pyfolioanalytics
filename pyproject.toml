@@ -27,6 +27,7 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 source-exclude = [
+    "src/pyfolioanalytics/dbht.py",
     "third_party/**",
     "GEMINI.md",
     "data/**",
@@ -49,3 +50,9 @@ dev = [
 testpaths = ["tests"]
 norecursedirs = ["third_party", ".*", "cvxopt", "cvxpy", "numpy", "pandas", "pyscipopt", "riskfolio-lib", "scikit-learn", "scipy", "yfinance"]
 addopts = "-v"
+
+[tool.pyright]
+exclude = [
+    "src/pyfolioanalytics/dbht.py",
+]
+

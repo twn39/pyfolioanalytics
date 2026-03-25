@@ -1,3 +1,4 @@
+import pandas as pd
 import json
 import numpy as np
 from pyfolioanalytics.meucci import entropy_prog, meucci_ranking, centroid_ranking
@@ -50,7 +51,7 @@ def test_meucci_ranking_cv():
     # R order was c(2, 3, 1, 4, 5) which is 1-based.
     order = [1, 2, 0, 3, 4]
 
-    res = meucci_ranking(R, order)
+    res = meucci_ranking(pd.DataFrame(R), order)
 
     expected_mu = np.array(data["meucci_ranking"]["mu"])
     expected_sigma = np.array(data["meucci_ranking"]["sigma"])
