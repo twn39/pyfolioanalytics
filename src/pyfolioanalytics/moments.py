@@ -346,7 +346,6 @@ def set_portfolio_moments(
             # Estimate Pi_mat (asymptotic variance of sample covariance)
             # Y is TxN
             # We need cov(y_it * y_jt) ->
-            Y2 = Y**2
             # Pi is sum_t [ (Y_it Y_jt - S_ij)^2 ] / T
 
             Pi_mat = np.zeros((N, N))

@@ -60,12 +60,12 @@ def entropy_prog(
     x0 = np.zeros(k_ineq + k_eq)
 
     def dual_objective(x):
-        l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+        lam = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
         v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
 
         exponent = np.zeros((J, 1))
-        if l is not None:
-            exponent -= A.T @ l
+        if lam is not None:
+            exponent -= A.T @ lam
         if v is not None:
             exponent -= Aeq.T @ v
 
@@ -73,23 +73,23 @@ def entropy_prog(
         x_p = np.exp(log_p - 1 + exponent)
         x_p = np.maximum(x_p, 1e-32)
 
-        # We want to maximize L = -sum(x_p) - l'b - v'beq
-        # So we minimize -L = sum(x_p) + l'b + v'beq
+        # We want to maximize L = -sum(x_p) - lam'b - v'beq
+        # So we minimize -L = sum(x_p) + lam'b + v'beq
         obj = np.sum(x_p)
-        if l is not None:
-            obj += (l.T @ b.reshape(-1, 1))[0, 0]
+        if lam is not None:
+            obj += (lam.T @ b.reshape(-1, 1))[0, 0]
         if v is not None:
             obj += (v.T @ beq.reshape(-1, 1))[0, 0]
 
         return obj
 
     def dual_gradient(x):
-        l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+        lam = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
         v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
 
         exponent = np.zeros((J, 1))
-        if l is not None:
-            exponent -= A.T @ l
+        if lam is not None:
+            exponent -= A.T @ lam
         if v is not None:
             exponent -= Aeq.T @ v
 
@@ -97,10 +97,10 @@ def entropy_prog(
         x_p = np.exp(log_p - 1 + exponent)
         x_p = np.maximum(x_p, 1e-32)
 
-        # Grad of -L w.r.t l: -(A*x_p - b) = b - A*x_p
+        # Grad of -L w.r.t lam: -(A*x_p - b) = b - A*x_p
         # Grad of -L w.r.t v: -(Aeq*x_p - beq) = beq - Aeq*x_p
         grad = []
-        if l is not None:
+        if lam is not None:
             grad.append((b.reshape(-1, 1) - A @ x_p).flatten())
         if v is not None:
             grad.append((beq.reshape(-1, 1) - Aeq @ x_p).flatten())
@@ -127,12 +127,12 @@ def entropy_prog(
         # But we want to be robust.
 
     # Recover posterior probabilities
-    l = res.x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
+    lam = res.x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
     v = res.x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
 
     exponent = np.zeros((J, 1))
-    if l is not None:
-        exponent -= A.T @ l
+    if lam is not None:
+        exponent -= A.T @ lam
     if v is not None:
         exponent -= Aeq.T @ v
 
