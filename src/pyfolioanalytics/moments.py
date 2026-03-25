@@ -274,11 +274,79 @@ def set_portfolio_moments(
         moments["mu"] = res_bl["mu"]
         moments["sigma"] = res_bl["sigma"]
     elif method == "shrinkage":
-        from sklearn.covariance import LedoitWolf
+        from sklearn.covariance import LedoitWolf, OAS
+        import warnings
 
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-        lw = LedoitWolf().fit(R_filtered.values)
-        moments["sigma"] = lw.covariance_
+        target = kwargs.get("shrinkage_target", "identity")
+        
+        if target == "identity":
+            lw = LedoitWolf().fit(R_filtered.values)
+            moments["sigma"] = lw.covariance_
+        elif target == "oas":
+            oas = OAS().fit(R_filtered.values)
+            moments["sigma"] = oas.covariance_
+        elif target == "constant_correlation":
+            # Ledoit-Wolf shrinkage towards constant correlation
+            # Equivalent to R's RiskPortfolios::covMcd or Riskfolio-Lib's cov_ledoit
+            import scipy.stats as st
+            X = R_filtered.values
+            T, N = X.shape
+            
+            # De-mean returns
+            Y = X - np.mean(X, axis=0)
+            
+            # Sample covariance matrix (T-1)
+            S = np.cov(X, rowvar=False)
+            
+            # Sample correlation matrix
+            std = np.sqrt(np.diag(S))
+            Corr = S / np.outer(std, std)
+            
+            # Mean correlation
+            r_bar = (np.sum(Corr) - N) / (N * (N - 1))
+            
+            # Target matrix F
+            F = r_bar * np.outer(std, std)
+            np.fill_diagonal(F, np.diag(S))
+            
+            # Estimate Pi_mat (asymptotic variance of sample covariance)
+            # Y is TxN
+            # We need cov(y_it * y_jt) -> 
+            Y2 = Y**2
+            # Pi is sum_t [ (Y_it Y_jt - S_ij)^2 ] / T
+            
+            Pi_mat = np.zeros((N, N))
+            for i in range(N):
+                for j in range(N):
+                    Pi_mat[i, j] = np.sum((Y[:, i] * Y[:, j] - S[i, j])**2) / T
+                    
+            pi_hat = np.sum(Pi_mat)
+            
+            # Estimate Rho
+            term1 = np.sum(np.diag(Pi_mat))
+            term2 = 0.0
+            
+            for i in range(N):
+                for j in range(N):
+                    if i != j:
+                        term2 += (r_bar / 2) * (
+                            np.sqrt(S[j,j]/S[i,i]) * np.sum((Y[:, i]**2 * Y[:, j] - S[i,i]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T +
+                            np.sqrt(S[i,i]/S[j,j]) * np.sum((Y[:, j]**2 * Y[:, i] - S[j,j]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T
+                        ) - r_bar * np.sqrt(S[i,i] * S[j,j]) * Pi_mat[i, j]
+            
+            rho_hat = term1 + term2
+            
+            # Estimate Gamma
+            gamma_hat = np.sum((S - F)**2)
+            
+            # Shrinkage intensity
+            kappa_hat = (pi_hat - rho_hat) / gamma_hat
+            delta = max(0.0, min(1.0, kappa_hat / T))
+            
+            moments["sigma"] = delta * F + (1 - delta) * S
+        else:
+            raise ValueError(f"Unknown shrinkage target: {target}")
     elif method == "meucci":
         from .meucci import entropy_pooling, meucci_moments
 
