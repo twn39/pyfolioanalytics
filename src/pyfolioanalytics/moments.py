@@ -1,7 +1,9 @@
-import pandas as pd
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, Optional
-from .factors import statistical_factor_model, factor_model_covariance, ac_ranking
+import pandas as pd
+
+from .factors import ac_ranking, factor_model_covariance, statistical_factor_model
 
 
 def M3_MM(R: np.ndarray) -> np.ndarray:
@@ -28,23 +30,23 @@ def M3_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
     f = fm["factors"].values
     res = fm["residuals"].values
     T, N = R.shape
-    
+
     # Factor M3
     f_centered = f - np.mean(f, axis=0)
     M3_f = M3_MM(f_centered)
-    
+
     # Residual M3 (diagonal-like)
     stockM3 = np.sum(res**3, axis=0) / (T - k - 1)
-    
+
     # S = B * M3_f * (B.T kron B.T)
     Bt = B.T
     S = (B @ M3_f) @ np.kron(Bt, Bt)
-    
+
     # D residual matrix (N x N^2)
     D = np.zeros((N, N**2))
     for i in range(N):
         D[i, i * N + i] = stockM3[i]
-        
+
     return S + D
 
 
@@ -58,23 +60,23 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
     f = fm["factors"].values
     res = fm["residuals"].values
     T, N = R.shape
-    
+
     # Factor M4
     f_centered = f - np.mean(f, axis=0)
     M4_f = M4_MM(f_centered)
-    
+
     # Factor M2 (Covariance)
     # R's cov(f) uses T-1
     f2 = np.cov(f, rowvar=False).reshape(k, k)
-    
+
     # Residual moments
     stockM2 = np.sum(res**2, axis=0) / (T - k - 1)
     stockM4 = np.sum(res**4, axis=0) / (T - k - 1)
-    
+
     # S = B * M4_f * (B.T kron B.T kron B.T)
     Bt = B.T
     S = (B @ M4_f) @ np.kron(Bt, np.kron(Bt, Bt))
-    
+
     # D residual matrix (N x N^3)
     # This is complex in MF. For SFM k=1 it's easier.
     # In PA, it calls a C routine. We'll implement the structured residual part.
@@ -135,7 +137,7 @@ def M4_SFM(R: pd.DataFrame, k: int = 1) -> np.ndarray:
         # Multi-factor residual approximation
         for i in range(N):
             D[i, i * N**2 + i * N + i] = stockM4[i]
-            
+
     return S + D
 
 
@@ -143,7 +145,7 @@ def shrink_comoments(M_sample: np.ndarray, M_target: np.ndarray, alpha: float = 
     return (1 - alpha) * M_sample + alpha * M_target
 
 
-def ewma_moments(R: np.ndarray, span: int = 36) -> Dict[str, Any]:
+def ewma_moments(R: np.ndarray, span: int = 36) -> dict[str, Any]:
     """
     Calculate Exponentially Weighted Moving Average (EWMA) mean and covariance.
     """
@@ -151,7 +153,7 @@ def ewma_moments(R: np.ndarray, span: int = 36) -> Dict[str, Any]:
     T, N = R.shape
     weights = (1 - alpha) ** np.arange(T - 1, -1, -1)
     weights /= weights.sum()
-    
+
     mu = np.average(R, weights=weights, axis=0)
     R_centered = R - mu
     # unbiased-like normalization can be done, but keeping it simple with weights
@@ -168,36 +170,37 @@ def semi_covariance(R: np.ndarray, benchmark: float = 0.0) -> np.ndarray:
     return (R_down.T @ R_down) / T
 
 
-def ccc_garch_moments(R: np.ndarray, mu: Optional[np.ndarray] = None) -> Dict[str, Any]:
+def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, Any]:
     """
     Constant Conditional Correlation (CCC) GARCH Moment Model.
     Equivalent to PortfolioAnalytics::CCCgarch.MM.
     """
-    from arch import arch_model
     import warnings
+
+    from arch import arch_model
 
     T, N = R.shape
     if mu is None:
         mu = np.mean(R, axis=0)
-    
+
     R_centered = R - mu
     S = np.zeros((T, N))
     nextS = np.zeros(N)
-    
+
     for i in range(N):
         # Scale returns by 100 for stability (arch library recommendation)
         scale_factor = 100.0
         y = R_centered[:, i] * scale_factor
-        
+
         # Fit GARCH(1,1)
         model = arch_model(y, vol='Garch', p=1, q=1, mean='Zero', dist='Normal')
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             res = model.fit(disp='off', show_warning=False)
-        
+
         # alpha1 check (on scaled parameters)
         alpha1 = res.params.get('alpha[1]', 0.0)
-        
+
         if alpha1 < 0.01:
             sigmat_scaled = np.full(T, np.std(y))
             nextSt_scaled = np.std(y)
@@ -205,26 +208,26 @@ def ccc_garch_moments(R: np.ndarray, mu: Optional[np.ndarray] = None) -> Dict[st
             sigmat_scaled = res.conditional_volatility
             forecast = res.forecast(horizon=1)
             nextSt_scaled = np.sqrt(forecast.variance.values[-1, 0])
-            
+
         # De-scale results
         S[:, i] = sigmat_scaled / scale_factor
         nextS[i] = nextSt_scaled / scale_factor
-        
+
     # Standardized residuals
     U = R_centered / S
-    
+
     # Constant Correlation Matrix
     Rcor = np.corrcoef(U, rowvar=False)
-    
+
     # Conditional Covariance Matrix for next period
     D = np.diag(nextS)
     sigma = D @ Rcor @ D
-    
+
     # Rescale U for higher order moments matching R
     # uncS = sqrt(diag(cov(U)))
     uncS = np.std(U, axis=0)
     U_rescaled = U * (nextS / uncS)
-    
+
     return {
         "mu": mu.reshape(-1, 1),
         "sigma": sigma,
@@ -235,7 +238,7 @@ def ccc_garch_moments(R: np.ndarray, mu: Optional[np.ndarray] = None) -> Dict[st
 
 def set_portfolio_moments(
     R: pd.DataFrame, portfolio: Any, method: str = "sample", **kwargs
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # Handle Multi-Layer Portfolio
     if hasattr(portfolio, "root"):
         portfolio = portfolio.root
@@ -274,12 +277,12 @@ def set_portfolio_moments(
         moments["mu"] = res_bl["mu"]
         moments["sigma"] = res_bl["sigma"]
     elif method == "shrinkage":
-        from sklearn.covariance import LedoitWolf, OAS
-        import warnings
+
+        from sklearn.covariance import OAS, LedoitWolf
 
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
         target = kwargs.get("shrinkage_target", "identity")
-        
+
         if target == "identity":
             lw = LedoitWolf().fit(R_filtered.values)
             moments["sigma"] = lw.covariance_
@@ -289,44 +292,43 @@ def set_portfolio_moments(
         elif target == "constant_correlation":
             # Ledoit-Wolf shrinkage towards constant correlation
             # Equivalent to R's RiskPortfolios::covMcd or Riskfolio-Lib's cov_ledoit
-            import scipy.stats as st
             X = R_filtered.values
             T, N = X.shape
-            
+
             # De-mean returns
             Y = X - np.mean(X, axis=0)
-            
+
             # Sample covariance matrix (T-1)
             S = np.cov(X, rowvar=False)
-            
+
             # Sample correlation matrix
             std = np.sqrt(np.diag(S))
             Corr = S / np.outer(std, std)
-            
+
             # Mean correlation
             r_bar = (np.sum(Corr) - N) / (N * (N - 1))
-            
+
             # Target matrix F
             F = r_bar * np.outer(std, std)
             np.fill_diagonal(F, np.diag(S))
-            
+
             # Estimate Pi_mat (asymptotic variance of sample covariance)
             # Y is TxN
-            # We need cov(y_it * y_jt) -> 
+            # We need cov(y_it * y_jt) ->
             Y2 = Y**2
             # Pi is sum_t [ (Y_it Y_jt - S_ij)^2 ] / T
-            
+
             Pi_mat = np.zeros((N, N))
             for i in range(N):
                 for j in range(N):
                     Pi_mat[i, j] = np.sum((Y[:, i] * Y[:, j] - S[i, j])**2) / T
-                    
+
             pi_hat = np.sum(Pi_mat)
-            
+
             # Estimate Rho
             term1 = np.sum(np.diag(Pi_mat))
             term2 = 0.0
-            
+
             for i in range(N):
                 for j in range(N):
                     if i != j:
@@ -334,16 +336,16 @@ def set_portfolio_moments(
                             np.sqrt(S[j,j]/S[i,i]) * np.sum((Y[:, i]**2 * Y[:, j] - S[i,i]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T +
                             np.sqrt(S[i,i]/S[j,j]) * np.sum((Y[:, j]**2 * Y[:, i] - S[j,j]*S[i,j]) * (Y[:, i] * Y[:, j] - S[i, j])) / T
                         ) - r_bar * np.sqrt(S[i,i] * S[j,j]) * Pi_mat[i, j]
-            
+
             rho_hat = term1 + term2
-            
+
             # Estimate Gamma
             gamma_hat = np.sum((S - F)**2)
-            
+
             # Shrinkage intensity
             kappa_hat = (pi_hat - rho_hat) / gamma_hat
             delta = max(0.0, min(1.0, kappa_hat / T))
-            
+
             moments["sigma"] = delta * F + (1 - delta) * S
         else:
             raise ValueError(f"Unknown shrinkage target: {target}")
@@ -401,12 +403,12 @@ def set_portfolio_moments(
     )
     if needs_m3_m4:
         R_centered = R_filtered.values - moments["mu"].T
-        
+
         # Determine calculation method for M3/M4
         comoment_method = kwargs.get("comoment_method", "sample")
         alpha = kwargs.get("comoment_alpha", 0.0)
         k_factors = kwargs.get("k", 1)
-        
+
         if comoment_method == "sample":
             moments["m3"] = M3_MM(R_centered)
             moments["m4"] = M4_MM(R_centered)

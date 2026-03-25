@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import pytest
 from pyfolioanalytics.meucci import entropy_prog, meucci_ranking, centroid_ranking
 
 def load_cv_data():

@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pytest
 from pyfolioanalytics.meucci import meucci_views, meucci_moments, meucci_ranking, entropy_prog
 
 

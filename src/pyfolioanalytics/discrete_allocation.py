@@ -1,7 +1,7 @@
+
+import cvxpy as cp
 import numpy as np
 import pandas as pd
-import cvxpy as cp
-from typing import Dict, Tuple, Optional
 
 
 def get_latest_prices(prices: pd.DataFrame) -> pd.Series:
@@ -20,10 +20,10 @@ class DiscreteAllocation:
 
     def __init__(
         self,
-        weights: Dict[str, float],
+        weights: dict[str, float],
         latest_prices: pd.Series,
         total_portfolio_value: float = 10000.0,
-        short_ratio: Optional[float] = None,
+        short_ratio: float | None = None,
     ):
         if not isinstance(weights, dict):
             raise TypeError("weights must be a dictionary of {ticker: weight}")
@@ -35,18 +35,18 @@ class DiscreteAllocation:
         self.weights = list(weights.items())
         self.latest_prices = latest_prices
         self.total_portfolio_value = total_portfolio_value
-        
+
         if short_ratio is None:
             self.short_ratio = sum([-w for _, w in self.weights if w < 0])
         else:
             self.short_ratio = short_ratio
-        
-        self.allocation: Dict[str, int] = {}
 
-    def _remove_zero_positions(self, allocation: Dict[str, int]) -> Dict[str, int]:
+        self.allocation: dict[str, int] = {}
+
+    def _remove_zero_positions(self, allocation: dict[str, int]) -> dict[str, int]:
         return {k: v for k, v in allocation.items() if v != 0}
 
-    def greedy_portfolio(self, reinvest: bool = False) -> Tuple[Dict[str, int], float]:
+    def greedy_portfolio(self, reinvest: bool = False) -> tuple[dict[str, int], float]:
         """
         Convert continuous weights into a discrete portfolio allocation
         using a greedy iterative approach.
@@ -61,7 +61,7 @@ class DiscreteAllocation:
 
             long_total = sum(longs.values())
             short_total = sum(shorts.values())
-            
+
             # Re-normalize
             longs = {t: w / long_total for t, w in longs.items()}
             shorts = {t: w / short_total for t, w in shorts.items()}
@@ -103,7 +103,7 @@ class DiscreteAllocation:
         while available_funds > 0:
             current_vals = np.array(buy_prices) * np.array(shares_bought)
             current_total = np.sum(current_vals)
-            
+
             if current_total == 0:
                 # If nothing bought in round 1, just pick the one with highest weight
                 ideal_weights = np.array([w for _, w in self.weights])
@@ -141,7 +141,7 @@ class DiscreteAllocation:
         self.allocation = self._remove_zero_positions(dict(zip(tickers, shares_bought)))
         return self.allocation, available_funds
 
-    def lp_portfolio(self, reinvest: bool = False, solver: Optional[str] = None) -> Tuple[Dict[str, int], float]:
+    def lp_portfolio(self, reinvest: bool = False, solver: str | None = None) -> tuple[dict[str, int], float]:
         """
         Convert continuous weights into a discrete portfolio allocation
         using integer programming.
@@ -152,7 +152,7 @@ class DiscreteAllocation:
 
             long_total = sum(longs.values())
             short_total = sum(shorts.values())
-            
+
             longs = {t: w / long_total for t, w in longs.items()}
             shorts = {t: w / short_total for t, w in shorts.items()}
 
@@ -179,18 +179,18 @@ class DiscreteAllocation:
 
         x = cp.Variable(n, integer=True)
         remaining_funds = self.total_portfolio_value - prices @ x
-        
+
         # Absolute difference between desired dollar amount and actual dollar amount
         delta = ideal_weights * self.total_portfolio_value - cp.multiply(x, prices)
         u = cp.Variable(n)
-        
+
         constraints = [
             delta <= u,
             -delta <= u,
             x >= 0,
             remaining_funds >= 0
         ]
-        
+
         objective = cp.sum(u) + remaining_funds
         prob = cp.Problem(cp.Minimize(objective), constraints)
         prob.solve(solver=solver)
@@ -201,5 +201,5 @@ class DiscreteAllocation:
         vals = np.rint(np.array(x.value)).astype(int)
         tickers = [t for t, _ in self.weights]
         self.allocation = self._remove_zero_positions(dict(zip(tickers, vals)))
-        
+
         return self.allocation, float(remaining_funds.value)

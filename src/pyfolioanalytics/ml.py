@@ -1,10 +1,11 @@
+
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import linkage, leaves_list, fcluster
+from scipy.cluster.hierarchy import fcluster, leaves_list, linkage
 from scipy.spatial.distance import squareform
-from typing import List
-from .dbht import DBHTs
+
 from .codependence import get_codependence_matrix, get_distance_matrix
+from .dbht import DBHTs
 
 
 def get_ivp(cov: np.ndarray) -> np.ndarray:
@@ -16,7 +17,7 @@ def get_ivp(cov: np.ndarray) -> np.ndarray:
     return ivp
 
 
-def get_cluster_var(cov: np.ndarray, cluster_indices: List[int]) -> float:
+def get_cluster_var(cov: np.ndarray, cluster_indices: list[int]) -> float:
     """
     Variance of a cluster based on IVP weights within the cluster.
     """
@@ -26,7 +27,7 @@ def get_cluster_var(cov: np.ndarray, cluster_indices: List[int]) -> float:
 
 
 def get_recursive_bisection(
-    cov: np.ndarray, sort_indices: List[int], method: str = "HRP"
+    cov: np.ndarray, sort_indices: list[int], method: str = "HRP"
 ) -> pd.Series:
     """
     Recursive bisection to allocate weights.
@@ -66,29 +67,29 @@ def get_recursive_bisection(
 def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
     cov = R.cov().values
-    
+
     # 1. Compute Codependence & Distance Matrix
     codep_method = kwargs.get("codependence", "pearson")
     dist_method = kwargs.get("distance", "standard")
-    
+
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        
+
         codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
 
-        
+
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        
+
         dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
 
-    
+
     clustering = kwargs.get("clustering", "linkage")
-    
+
     # 2. Hierarchical Clustering
     if clustering == "DBHT":
         S = corr + 1.0
@@ -97,7 +98,7 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     else:
         method = kwargs.get("linkage_method", "single")
         Z = linkage(squareform(dist), method=method)
-        
+
     sort_indices = leaves_list(Z).tolist()
 
     weights = get_recursive_bisection(cov, sort_indices, method="HRP")
@@ -110,29 +111,29 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
 def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
     cov = R.cov().values
-    
+
     # 1. Compute Codependence & Distance Matrix
     codep_method = kwargs.get("codependence", "pearson")
     dist_method = kwargs.get("distance", "standard")
-    
+
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        
+
         codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
 
-        
+
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        
+
         dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
 
-    
+
     clustering = kwargs.get("clustering", "linkage")
-    
+
     # 2. Hierarchical Clustering
     if clustering == "DBHT":
         S = corr + 1.0
@@ -141,7 +142,7 @@ def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     else:
         method = kwargs.get("linkage_method", "ward")
         Z = linkage(squareform(dist), method=method)
-        
+
     sort_indices = leaves_list(Z).tolist()
 
     weights = get_recursive_bisection(cov, sort_indices, method="HERC")
@@ -155,23 +156,23 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     from .solvers import solve_mvo
 
     asset_names = R.columns.tolist()
-    
+
     # 1. Compute Codependence & Distance Matrix
     codep_method = kwargs.get("codependence", "pearson")
     dist_method = kwargs.get("distance", "standard")
-    
+
     if codep_method == "custom" and "custom_matrix" in kwargs:
         corr = kwargs["custom_matrix"]
     else:
-        
+
         codep_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         corr = get_codependence_matrix(R, method=codep_method, **codep_kwargs)
 
-        
+
     if dist_method == "custom" and "custom_distance" in kwargs:
         dist = kwargs["custom_distance"]
     else:
-        
+
         dist_kwargs = {k: v for k, v in kwargs.items() if k not in ["codependence", "distance", "method"]}
         dist = get_distance_matrix(corr, method=dist_method, **dist_kwargs)
 
@@ -182,7 +183,7 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     if clustering == "DBHT":
         S = corr + 1.0
         res = DBHTs(dist, S)
-        clusters = res[0].flatten() + 1 
+        clusters = res[0].flatten() + 1
     else:
         method = kwargs.get("linkage_method", "ward")
         link = linkage(squareform(dist), method=method)

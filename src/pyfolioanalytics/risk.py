@@ -1,10 +1,10 @@
+import math
+
+import cvxpy as cp
 import numpy as np
-from scipy.stats import norm
 from scipy.optimize import minimize_scalar
 from scipy.special import binom
-from typing import Optional
-import math
-import cvxpy as cp
+from scipy.stats import norm
 
 
 def MAD(weights: np.ndarray, R: np.ndarray) -> float:
@@ -31,8 +31,8 @@ def VaR(
     weights: np.ndarray,
     mu: np.ndarray,
     sigma: np.ndarray,
-    m3: Optional[np.ndarray] = None,
-    m4: Optional[np.ndarray] = None,
+    m3: np.ndarray | None = None,
+    m4: np.ndarray | None = None,
     p: float = 0.95,
     method: str = "gaussian",
 ) -> float:
@@ -65,8 +65,8 @@ def ES(
     weights: np.ndarray,
     mu: np.ndarray,
     sigma: np.ndarray,
-    m3: Optional[np.ndarray] = None,
-    m4: Optional[np.ndarray] = None,
+    m3: np.ndarray | None = None,
+    m4: np.ndarray | None = None,
     p: float = 0.95,
     method: str = "gaussian",
 ) -> float:
@@ -129,8 +129,8 @@ def risk_contribution(weights: np.ndarray, sigma: np.ndarray) -> np.ndarray:
 
 
 def risk_decomposition(
-    weights: np.ndarray, 
-    sigma: np.ndarray, 
+    weights: np.ndarray,
+    sigma: np.ndarray,
     type: str = "StdDev"
 ) -> dict:
     """
@@ -157,7 +157,7 @@ def risk_decomposition(
     """
     weights = weights.flatten()
     p_var = float(weights.T @ sigma @ weights)
-    
+
     if type == "StdDev":
         total_risk = np.sqrt(p_var)
         if total_risk < 1e-14:
@@ -178,7 +178,7 @@ def risk_decomposition(
             pcr = ccr / p_var
     else:
         raise ValueError("Type must be 'StdDev' or 'var'")
-        
+
     return {
         "total": total_risk,
         "mcr": mcr,
@@ -191,7 +191,7 @@ def factor_risk_decomposition(
     weights: np.ndarray,
     B: np.ndarray,
     sigma_f: np.ndarray,
-    residual_sigma: Optional[np.ndarray] = None,
+    residual_sigma: np.ndarray | None = None,
     type: str = "StdDev",
 ) -> dict:
     """
@@ -378,7 +378,7 @@ def owa_l_moment_crm_weights(
     method: str = "MSD",
     g: float = 0.5,
     max_phi: float = 0.5,
-    solver: Optional[str] = None,
+    solver: str | None = None,
 ) -> np.ndarray:
     ws = np.empty((T, 0))
     for i in range(2, k + 1):
@@ -473,26 +473,26 @@ def numerical_risk_contribution(weights: np.ndarray, R: np.ndarray, risk_func, *
     eps = 1e-6
     n = len(weights)
     grad = np.zeros(n)
-    
+
     for i in range(n):
         w_plus = weights.copy()
         w_plus[i] += eps
         r_plus = risk_func(w_plus, R, **kwargs)
-        
+
         w_minus = weights.copy()
         w_minus[i] -= eps
         r_minus = risk_func(w_minus, R, **kwargs)
-        
+
         grad[i] = (r_plus - r_minus) / (2 * eps)
-        
+
     rc = weights * grad
-    
+
     # Optional scaling to exact risk value to fix floating point drift
     total_risk = risk_func(weights, R, **kwargs)
     sum_rc = np.sum(rc)
     if abs(sum_rc) > 1e-12 and abs(total_risk) > 1e-12:
         rc = rc * (total_risk / sum_rc)
-        
+
     return rc
 
 

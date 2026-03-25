@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import pytest
 from pyfolioanalytics.risk import risk_decomposition
 
 def load_cv_data():

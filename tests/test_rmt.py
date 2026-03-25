@@ -4,8 +4,7 @@ from pyfolioanalytics.rmt import (
     denoise_covariance, 
     gerber_statistic, 
     detone_covariance, 
-    bootstrap_uncertainty_set,
-    marchenko_pastur_pdf
+    bootstrap_uncertainty_set
 )
 
 def test_marchenko_pastur_denoising():

@@ -1,6 +1,6 @@
-import numpy as np
-from typing import List, Tuple, Any, Optional
+from typing import Any
 
+import numpy as np
 
 
 class CLA:
@@ -41,7 +41,7 @@ class CLA:
     def _infnone(x):
         return float("-inf") if x is None else x
 
-    def _init_algo(self) -> Tuple[List[int], np.ndarray]:
+    def _init_algo(self) -> tuple[list[int], np.ndarray]:
         # Form structured array of (id, mu)
         idx = np.argsort(self.mu.flatten())
 
@@ -60,8 +60,8 @@ class CLA:
         return [idx[i]], w
 
     def _get_matrices(
-        self, f: List[int], w: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        self, f: list[int], w: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         b = list(set(range(self.n)) - set(f))
         covarF = self.sigma[np.ix_(f, f)]
         meanF = self.mu[f]
@@ -84,7 +84,7 @@ class CLA:
         wB: np.ndarray,
         i: int,
         bi: Any,
-    ) -> Tuple[Optional[float], Optional[float]]:
+    ) -> tuple[float | None, float | None]:
         onesF = np.ones((len(meanF), 1))
         c1 = onesF.T @ covarF_inv @ onesF
         c2 = covarF_inv @ meanF
@@ -117,7 +117,7 @@ class CLA:
         meanF: np.ndarray,
         wB: np.ndarray,
         lam: float,
-    ) -> Tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float]:
         onesF = np.ones((len(meanF), 1))
         g1 = onesF.T @ covarF_inv @ meanF
         g2 = onesF.T @ covarF_inv @ onesF
@@ -282,7 +282,7 @@ class CLA:
 
     def efficient_frontier(
         self, points: int = 100
-    ) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
+    ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
         if not self.w:
             self.solve()
         mu_list, sigma_list, weights_list = [], [], []

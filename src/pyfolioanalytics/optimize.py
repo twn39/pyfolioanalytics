@@ -1,44 +1,46 @@
-import pandas as pd
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, List, Optional
-from .portfolio import Portfolio
+import pandas as pd
+
+from .convex_solvers import RISK_STRATEGIES, ConvexOptimizer
+from .ml import herc_optimization, hrp_optimization, nco_optimization
 from .moments import set_portfolio_moments
+from .portfolio import Portfolio
 from .random_portfolios import random_portfolios
 from .risk import (
-    MAD,
-    semi_MAD,
-    VaR,
     ES,
-    EVaR,
-    risk_contribution,
-    max_drawdown,
-    average_drawdown,
+    MAD,
     CDaR,
     EDaR,
-    RLVaR,
+    EVaR,
     RLDaR,
-    owa_risk,
+    RLVaR,
+    VaR,
+    average_drawdown,
+    max_drawdown,
     owa_gmd_weights,
     owa_l_moment_crm_weights,
+    owa_risk,
+    risk_contribution,
+    semi_MAD,
 )
-from .ml import hrp_optimization, herc_optimization, nco_optimization
 from .solvers import (
+    solve_cla,
     solve_kelly,
     solve_mdiv,
     solve_noc,
-    solve_cla,
     solve_nonlinear,
 )
-from .convex_solvers import ConvexOptimizer, RISK_STRATEGIES
 
 
 def calculate_objective_measures(
     weights: np.ndarray,
-    moments: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
-    R: Optional[np.ndarray] = None,
-    constraints: Optional[Dict[str, Any]] = None,
-) -> Dict[str, float]:
+    moments: dict[str, Any],
+    objectives: list[dict[str, Any]],
+    R: np.ndarray | None = None,
+    constraints: dict[str, Any] | None = None,
+) -> dict[str, float]:
     measures = {}
     mu = moments.get("mu")
     sigma = moments.get("sigma")
@@ -59,7 +61,7 @@ def calculate_objective_measures(
         obj_name = obj["name"]
         obj_type = obj.get("type")
         obj_args = obj.get("arguments", {})
-        
+
         if obj_name == "VaR" and mu is not None and sigma is not None:
             measures[obj_name] = VaR(weights, mu, sigma, m3, m4, **obj_args)
         elif obj_name == "ES" and mu is not None and sigma is not None:
@@ -91,10 +93,10 @@ def calculate_objective_measures(
             if owa_weights is None:
                 owa_weights = owa_gmd_weights(R.shape[0])
             measures[obj_name] = owa_risk(weights, R, owa_weights)
-        
+
         # Track tracking error for objectives or constraints
         te_benchmark = obj_args.get("benchmark") or (constraints.get("benchmark") if constraints else None)
-        
+
         if (obj_name == "tracking_error" or obj_type == "tracking_error" or (obj_name == "StdDev" and te_benchmark is not None)) and sigma is not None:
             if te_benchmark is not None:
                 w_b = te_benchmark
@@ -103,7 +105,7 @@ def calculate_objective_measures(
                     w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
                 elif isinstance(w_b, pd.Series):
                     w_b = w_b.values
-                
+
                 if isinstance(w_b, (list, np.ndarray)) and len(w_b) == len(weights):
                     diff = weights - w_b
                     te_var = np.dot(diff.T, np.dot(sigma, diff))
@@ -113,8 +115,9 @@ def calculate_objective_measures(
             if obj_name in ["StdDev", "Variance"] and sigma is not None:
                 rc = risk_contribution(weights, sigma)
             else:
-                from .risk import numerical_risk_contribution
                 import pyfolioanalytics.risk as pr
+
+                from .risk import numerical_risk_contribution
                 func = getattr(pr, obj_name, None)
                 if func is None:
                     # Fallback to StdDev if not found or something else
@@ -123,7 +126,7 @@ def calculate_objective_measures(
                     if R is None:
                         raise ValueError(f"Historical returns R must be provided for alternative risk parity using {obj_name}")
                     rc = numerical_risk_contribution(weights, R, func, **obj_args)
-            
+
             measures["risk_contribution_" + obj_name] = rc
             sum_rc = np.sum(rc)
             if sum_rc > 1e-12:
@@ -145,7 +148,7 @@ def calculate_objective_measures(
 
 def optimize_portfolio(
     R: pd.DataFrame, portfolio: Portfolio, optimize_method: str = "ROI", **kwargs
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # 1. Dispatch Multi-Layer
     if hasattr(portfolio, "sub_portfolios") and len(getattr(portfolio, "sub_portfolios", {})) > 0:
         return optimize_portfolio_multi_layer(R, portfolio, **kwargs)
@@ -178,29 +181,29 @@ def optimize_portfolio(
         rp_method = rp_kwargs.pop("rp_method", "transform")
         # generate random portfolios
         rp_weights = random_portfolios(portfolio, permutations=permutations, method=rp_method, **rp_kwargs)
-        
+
         if len(rp_weights) == 0:
             return {"weights": None, "status": "infeasible", "moments": moments, "portfolio": portfolio}
-            
+
         best_score = float("inf")
         best_w = None
         best_measures = {}
         R_vals = R.values if R is not None else None
-        
+
         enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
-        
+
         for w in rp_weights:
             measures = calculate_objective_measures(w, moments, enabled_objs, R=R_vals, constraints=constraints)
-            
+
             # Penalize constraint violations
             penalty = 0.0
-            
+
             # Position Limit Penalty
             if "max_pos" in constraints:
                 pos_count = np.sum(w > 1e-6)
                 if pos_count > constraints["max_pos"]:
                     penalty += (pos_count - constraints["max_pos"]) * 1e4
-            
+
             # Score objective
             score = penalty
             for obj in enabled_objs:
@@ -212,12 +215,12 @@ def optimize_portfolio(
                     score += mult * (val - target) ** 2
                 else:
                     score += mult * val
-            
+
             if score < best_score:
                 best_score = score
                 best_w = w
                 best_measures = measures
-                
+
         final_w = pd.Series(best_w, index=R.columns)
         return {"weights": final_w, "objective_measures": best_measures, "status": "optimal", "moments": moments, "portfolio": portfolio}
 
@@ -225,14 +228,15 @@ def optimize_portfolio(
     result = None
     enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
     has_risk_budget = any(obj.get("type") == "risk_budget" for obj in enabled_objs)
-    
+
     if not has_risk_budget and optimize_method not in ["Kelly", "MDIV", "NOC", "CLA", "random", "HRP", "HERC", "NCO"]:
         risk_obj = next((o for o in enabled_objs if o.get("type") in ["risk", "portfolio_risk_objective"]), None)
         risk_name = risk_obj.get("name", "StdDev") if risk_obj else "StdDev"
-        
+
         if risk_name == "L_Moment_CRM":
-            from .risk import owa_l_moment_crm_weights
             import copy
+
+            from .risk import owa_l_moment_crm_weights
             w_owa = owa_l_moment_crm_weights(R.shape[0], **risk_obj.get("arguments", {}))
             opt_portfolio = copy.deepcopy(portfolio)
             for o in opt_portfolio.objectives:
@@ -280,7 +284,7 @@ def optimize_portfolio(
 
 def optimize_portfolio_multi_layer(
     R: pd.DataFrame, portfolio: Any, **kwargs
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     sub_results = {}
     sub_returns = {}
     for meta_asset, sub_port in portfolio.sub_portfolios.items():
@@ -296,7 +300,7 @@ def optimize_portfolio_multi_layer(
         meta_R = pd.concat([meta_R, R[other_assets]], axis=1)
 
     root_res = optimize_portfolio(meta_R, portfolio.root, **kwargs)
-    
+
     # final_weights should accumulate weights for all leaf assets found in R
     final_weights = pd.Series(0.0, index=R.columns)
     root_weights = root_res["weights"]
@@ -315,7 +319,7 @@ def optimize_portfolio_multi_layer(
     full_assets_port = Portfolio(assets=list(R.columns))
     moments = set_portfolio_moments(R, full_assets_port)
     measures = calculate_objective_measures(final_weights.values, moments, portfolio.root.objectives, R=R.values)
-    
+
     return {"weights": final_weights, "objective_measures": measures, "root_result": root_res, "sub_results": sub_results, "status": root_res["status"], "portfolio": portfolio}
 
 

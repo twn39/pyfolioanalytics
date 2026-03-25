@@ -1,5 +1,6 @@
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, Optional
 
 
 def black_litterman(
@@ -9,8 +10,8 @@ def black_litterman(
     q: np.ndarray,
     tau: float = 0.05,
     risk_aversion: float = 2.5,
-    Omega: Optional[np.ndarray] = None,
-) -> Dict[str, Any]:
+    Omega: np.ndarray | None = None,
+) -> dict[str, Any]:
     """
     Standard Black-Litterman Model.
     - sigma: Covariance matrix (N x N)

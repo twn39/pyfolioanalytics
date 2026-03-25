@@ -1,7 +1,6 @@
 import json
 import numpy as np
 import pandas as pd
-import pytest
 from pyfolioanalytics.moments import ccc_garch_moments
 
 def load_real_cv_data():

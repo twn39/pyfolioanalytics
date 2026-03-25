@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Union, Optional
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -6,7 +7,7 @@ import pandas as pd
 class Portfolio:
     def __init__(
         self,
-        assets: Union[int, List[str], Dict[str, float]],
+        assets: int | list[str] | dict[str, float],
         name: str = "portfolio",
     ):
         self.name = name
@@ -109,24 +110,24 @@ class Portfolio:
             B = kwargs.get("B")
             lower = kwargs.get("lower")
             upper = kwargs.get("upper")
-            
+
             if B is None or lower is None or upper is None:
                 raise ValueError("Factor exposure constraint requires B, lower, and upper.")
-            
+
             # Convert B to matrix if it's a list or vector
             if isinstance(B, (list, np.ndarray)) and not isinstance(B, pd.DataFrame):
                 B = np.array(B)
                 if B.ndim == 1:
                     B = B.reshape(-1, 1)
-            
+
             # Validate dimensions
             if B.shape[0] != nassets:
                 raise ValueError(f"B must have {nassets} rows (number of assets).")
-            
+
             nfactors = B.shape[1]
             if len(lower) != nfactors or len(upper) != nfactors:
                 raise ValueError(f"lower and upper must have length {nfactors} (number of factors).")
-            
+
             constraint.update({
                 "B": B,
                 "lower": np.array(lower),
@@ -170,10 +171,10 @@ class Portfolio:
     def add_objective(
         self,
         type: str,
-        name: Optional[str] = None,
+        name: str | None = None,
         enabled: bool = True,
-        arguments: Optional[Dict[str, Any]] = None,
-        multiplier: Optional[float] = None,
+        arguments: dict[str, Any] | None = None,
+        multiplier: float | None = None,
         **kwargs,
     ):
         if name is None:
@@ -195,7 +196,7 @@ class Portfolio:
         self.objectives.append(obj)
         return self
 
-    def get_constraints(self) -> Dict[str, Any]:
+    def get_constraints(self) -> dict[str, Any]:
         asset_names = list(self.assets.keys())
         len(asset_names)
         res = {
@@ -257,7 +258,7 @@ class Portfolio:
 
 
 class RegimePortfolio:
-    def __init__(self, portfolios: List[Portfolio], regime_labels: List[Any]):
+    def __init__(self, portfolios: list[Portfolio], regime_labels: list[Any]):
         if len(portfolios) != len(regime_labels):
             raise ValueError("Number of portfolios must match number of regime labels.")
         self.portfolios = dict(zip(regime_labels, portfolios))

@@ -1,8 +1,6 @@
-import pytest
 import pandas as pd
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.backtest import backtest_portfolio, BacktestResult
+from pyfolioanalytics.backtest import BacktestResult
 
 def test_backtest_result_stats():
     dates = pd.date_range("2020-01-01", periods=100, freq="D")

@@ -1,11 +1,12 @@
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List, Union, Optional
 from scipy.stats import norm
 
 
 def ac_ranking(
-    R: pd.DataFrame, order: List[Union[int, str]], max_value: Optional[float] = None
+    R: pd.DataFrame, order: list[int | str], max_value: float | None = None
 ) -> np.ndarray:
     """
     Asset Ranking based on Almgren and Chriss (2005).
@@ -65,7 +66,7 @@ def scale_range(x: np.ndarray, new_min: float, new_max: float) -> np.ndarray:
     return ((x - old_min) * new_range) / old_range + new_min
 
 
-def centroid_complete_mc(order: List[int], simulations: int = 1000) -> np.ndarray:
+def centroid_complete_mc(order: list[int], simulations: int = 1000) -> np.ndarray:
     n = len(order)
     sims = np.random.randn(simulations, n)
     sims.sort(axis=1)
@@ -77,7 +78,7 @@ def centroid_complete_mc(order: List[int], simulations: int = 1000) -> np.ndarra
     return out
 
 
-def statistical_factor_model(R: pd.DataFrame, k: int = 3) -> Dict[str, Any]:
+def statistical_factor_model(R: pd.DataFrame, k: int = 3) -> dict[str, Any]:
     """
     Extract statistical factors using PCA.
     Returns:
@@ -123,7 +124,7 @@ def statistical_factor_model(R: pd.DataFrame, k: int = 3) -> Dict[str, Any]:
     }
 
 
-def factor_model_covariance(model_results: Dict[str, Any]) -> np.ndarray:
+def factor_model_covariance(model_results: dict[str, Any]) -> np.ndarray:
     """
     Calculate the factor model covariance matrix.
     Sigma = Beta * Sigma_f * Beta' + Diag(Sigma_e)

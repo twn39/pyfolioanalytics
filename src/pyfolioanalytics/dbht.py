@@ -1,7 +1,8 @@
 import numpy as np
 import scipy.sparse as sp
-from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import from_mlab_linkage, optimal_leaf_ordering
+from scipy.spatial.distance import squareform
+
 
 def DBHTs(D, S, leaf_order=True):
     """
@@ -34,7 +35,7 @@ def PMFG_T2s(W, nargout=3):
     in_v = -1 * np.ones(N, dtype=np.int32)
     tri = np.zeros((2 * N - 4, 3))
     separators = np.zeros((N - 4, 3))
-    
+
     s = np.sum(W * (W > np.mean(W)), axis=1)
     j = np.int32(np.argsort(s)[::-1].reshape(-1))
 
@@ -50,7 +51,7 @@ def PMFG_T2s(W, nargout=3):
     A[in_v[1], in_v[2]] = 1
     A[in_v[1], in_v[3]] = 1
     A[in_v[2], in_v[3]] = 1
-    
+
     gain = np.zeros((N, 2 * N - 4))
     gain[ou_v, 0] = np.sum(W[np.ix_(ou_v, np.int32(tri[0, :]))], axis=1)
     gain[ou_v, 1] = np.sum(W[np.ix_(ou_v, np.int32(tri[1, :]))], axis=1)
@@ -87,7 +88,7 @@ def PMFG_T2s(W, nargout=3):
     cliques = None
     if nargout > 3:
         cliques = np.vstack((in_v[0:4].reshape(1, -1), np.hstack((separators, in_v[4:].reshape(-1, 1)))))
-    
+
     return (A, tri, separators, cliques, None)
 
 def distance_wei(L):
@@ -140,7 +141,7 @@ def CliqHierarchyTree2s(Apm, method1):
         if indx_s.shape[0] != 0:
             Sb[n] = len(indx_s) - 3
         M[indx_s, n] = 1
-    
+
     Pred = BuildHierarchy(M)
     Root = np.argwhere(Pred == -1)
     if method1.lower() == "uniqueroot":
@@ -158,7 +159,7 @@ def CliqHierarchyTree2s(Apm, method1):
             if Pred[n] != -1:
                 H[n, np.int32(Pred[n])] = 1
         H = H + H.T
-    
+
     H2, Mb = BubbleHierarchy(Pred, Sb, A, CliqList)
     H2 = 1.0 * (H2 != 0)
     return (H, H2, Mb, CliqList, Sb)

@@ -1,18 +1,18 @@
-import warnings
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from typing import Dict, Optional, List, Any, Union
 
 
 def entropy_prog(
     p: np.ndarray,
-    A: Optional[np.ndarray] = None,
-    b: Optional[np.ndarray] = None,
-    Aeq: Optional[np.ndarray] = None,
-    beq: Optional[np.ndarray] = None,
+    A: np.ndarray | None = None,
+    b: np.ndarray | None = None,
+    Aeq: np.ndarray | None = None,
+    beq: np.ndarray | None = None,
     verbose: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Entropy pooling program for blending views on scenarios with a prior scenario-probability distribution.
     
@@ -60,17 +60,17 @@ def entropy_prog(
     def dual_objective(x):
         l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
         v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
-        
+
         exponent = np.zeros((J, 1))
         if l is not None:
             exponent -= A.T @ l
         if v is not None:
             exponent -= Aeq.T @ v
-        
+
         log_p = np.log(np.maximum(p, 1e-32))
         x_p = np.exp(log_p - 1 + exponent)
         x_p = np.maximum(x_p, 1e-32)
-        
+
         # We want to maximize L = -sum(x_p) - l'b - v'beq
         # So we minimize -L = sum(x_p) + l'b + v'beq
         obj = np.sum(x_p)
@@ -78,23 +78,23 @@ def entropy_prog(
             obj += (l.T @ b.reshape(-1, 1))[0, 0]
         if v is not None:
             obj += (v.T @ beq.reshape(-1, 1))[0, 0]
-            
+
         return obj
 
     def dual_gradient(x):
         l = x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
         v = x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
-        
+
         exponent = np.zeros((J, 1))
         if l is not None:
             exponent -= A.T @ l
         if v is not None:
             exponent -= Aeq.T @ v
-            
+
         log_p = np.log(np.maximum(p, 1e-32))
         x_p = np.exp(log_p - 1 + exponent)
         x_p = np.maximum(x_p, 1e-32)
-        
+
         # Grad of -L w.r.t l: -(A*x_p - b) = b - A*x_p
         # Grad of -L w.r.t v: -(Aeq*x_p - beq) = beq - Aeq*x_p
         grad = []
@@ -102,12 +102,12 @@ def entropy_prog(
             grad.append((b.reshape(-1, 1) - A @ x_p).flatten())
         if v is not None:
             grad.append((beq.reshape(-1, 1) - Aeq @ x_p).flatten())
-            
+
         return np.concatenate(grad)
 
     # Inequality multipliers must be >= 0
     bounds = [(0, None)] * k_ineq + [(None, None)] * k_eq
-    
+
     res = minimize(
         dual_objective,
         x0,
@@ -127,16 +127,16 @@ def entropy_prog(
     # Recover posterior probabilities
     l = res.x[:k_ineq].reshape(-1, 1) if k_ineq > 0 else None
     v = res.x[k_ineq:].reshape(-1, 1) if k_eq > 0 else None
-    
+
     exponent = np.zeros((J, 1))
     if l is not None:
         exponent -= A.T @ l
     if v is not None:
         exponent -= Aeq.T @ v
-        
+
     log_p = np.log(np.maximum(p, 1e-32))
     p_post = np.exp(log_p - 1 + exponent)
-    
+
     sum_p = np.sum(p_post)
     if sum_p > 1e-12:
         p_post = p_post / sum_p
@@ -179,10 +179,10 @@ def centroid_ranking(N: int) -> np.ndarray:
 
 
 def meucci_ranking(
-    R: pd.DataFrame, 
-    order: List[Union[int, str]],
-    p: Optional[np.ndarray] = None
-) -> Dict[str, np.ndarray]:
+    R: pd.DataFrame,
+    order: list[int | str],
+    p: np.ndarray | None = None
+) -> dict[str, np.ndarray]:
     """
     Asset Ranking using Meucci's Entropy Pooling.
     
@@ -194,35 +194,35 @@ def meucci_ranking(
     else:
         X = np.asanyarray(R)
         asset_names = [str(i) for i in range(X.shape[1])]
-        
+
     J, N = X.shape
     if p is None:
         p = np.full(J, 1.0 / J)
-    
+
     # Map order to indices if names are provided
     order_idx = [asset_names.index(o) if isinstance(o, str) else o for o in order]
     k = len(order_idx)
-    
+
     # Equality constraints: sum(p) = 1
     Aeq = np.ones((1, J))
     beq = np.array([1.0])
-    
+
     # Inequality constraints: E[R_{order[i]}] <= E[R_{order[i+1]}]
     # A * p_ <= 0  => sum(p_j * (R_{j, order[i]} - R_{j, order[i+1]})) <= 0
     V = X[:, order_idx[:-1]] - X[:, order_idx[1:]]
     A = V.T # (k-1) x J
     b = np.zeros(k - 1)
-    
+
     res = entropy_prog(p, A=A, b=b, Aeq=Aeq, beq=beq)
     p_post = res['p_']
-    
+
     return meucci_moments(X, p_post)
 
 
 def meucci_views(
-    R: pd.DataFrame, 
-    views: List[Dict[str, Any]],
-    p: Optional[np.ndarray] = None
+    R: pd.DataFrame,
+    views: list[dict[str, Any]],
+    p: np.ndarray | None = None
 ) -> np.ndarray:
     """
     Automate the generation of constraints for Meucci's Entropy Pooling based on high-level view descriptions.
@@ -238,17 +238,17 @@ def meucci_views(
     else:
         X = np.asanyarray(R)
         asset_names = [str(i) for i in range(X.shape[1])]
-        
+
     J, N = X.shape
     if p is None:
         p = np.full(J, 1.0 / J)
-    
+
     Aeq_list = [np.ones((1, J))] # sum(p) = 1
     beq_list = [1.0]
-    
+
     Aineq_list = []
     bineq_list = []
-    
+
     for view in views:
         v_type = view['type']
         if v_type == 'relative':
@@ -257,12 +257,12 @@ def meucci_views(
             # E[R_h - R_l] >= 0  => sum(p_j * (R_jl - R_jh)) <= 0
             Aineq_list.append((X[:, idx_l] - X[:, idx_h]).reshape(1, -1))
             bineq_list.append(0.0)
-            
+
         elif v_type == 'absolute':
             idx = asset_names.index(view['asset'])
             Aeq_list.append(X[:, idx].reshape(1, -1))
             beq_list.append(view['value'])
-            
+
         elif v_type == 'inequality':
             idx = asset_names.index(view['asset'])
             direction = view.get('direction', 'less')
@@ -275,15 +275,15 @@ def meucci_views(
 
     Aeq = np.vstack(Aeq_list)
     beq = np.array(beq_list)
-    
+
     Aineq = np.vstack(Aineq_list) if Aineq_list else None
     bineq = np.array(bineq_list) if bineq_list else None
-    
+
     res = entropy_prog(p, A=Aineq, b=bineq, Aeq=Aeq, beq=beq)
     return res['p_']
 
 
-def meucci_moments(R: np.ndarray, posterior_probs: np.ndarray) -> Dict[str, np.ndarray]:
+def meucci_moments(R: np.ndarray, posterior_probs: np.ndarray) -> dict[str, np.ndarray]:
     """
     Calculate adjusted mean and covariance based on posterior probabilities.
     """
@@ -304,10 +304,10 @@ def meucci_moments(R: np.ndarray, posterior_probs: np.ndarray) -> Dict[str, np.n
 # Maintain backward compatibility for original names
 def entropy_pooling(
     prior_probs: np.ndarray,
-    Aeq: Optional[np.ndarray] = None,
-    beq: Optional[np.ndarray] = None,
-    Aineq: Optional[np.ndarray] = None,
-    bineq: Optional[np.ndarray] = None,
+    Aeq: np.ndarray | None = None,
+    beq: np.ndarray | None = None,
+    Aineq: np.ndarray | None = None,
+    bineq: np.ndarray | None = None,
 ) -> np.ndarray:
     """Deprecated: use entropy_prog instead."""
     res = entropy_prog(prior_probs, A=Aineq, b=bineq, Aeq=Aeq, beq=beq)

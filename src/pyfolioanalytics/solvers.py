@@ -1,8 +1,9 @@
+from typing import Any
+
 import cvxpy as cp
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List
-from scipy.optimize import minimize, differential_evolution
+from scipy.optimize import differential_evolution, minimize
 
 
 def _apply_linear_constraints(cp_constraints, w, constraints):
@@ -15,11 +16,11 @@ def _apply_linear_constraints(cp_constraints, w, constraints):
 
 
 def solve_mvo(
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     n = len(moments["mu"])
     w = cp.Variable(n)
     mu = moments["mu"].flatten()
@@ -122,7 +123,7 @@ def solve_mvo(
             w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
         elif isinstance(w_b, pd.Series):
             w_b = w_b.reindex(asset_names, fill_value=0.0).values
-        
+
         diff = w - w_b
         # We can use quad_form or norm if we take Cholesky
         # PortfolioAnalytics usually treats target as StdDev target
@@ -138,7 +139,7 @@ def solve_mvo(
             w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
         elif isinstance(w_b, pd.Series):
             w_b = w_b.reindex(asset_names, fill_value=0.0).values
-        
+
         # AS constraint
         cp_constraints.append(0.5 * cp.norm(w - w_b, 1) <= as_target)
 
@@ -184,23 +185,23 @@ def solve_mvo(
         if sigma_sigma is not None:
             k_sigma = constraints.get("k_sigma", 1.0)
             G_sigma = np.linalg.cholesky(sigma_sigma).T
-            
+
             W = cp.Variable((n, n), symmetric=True)
             E = cp.Variable((n, n), symmetric=True)
             sigma_risk = cp.Variable()
-            
+
             # Conic constraints for robustness
             # PortfolioAnalytics/Optimisers.jl approach:
             # || G_sigma * vec(W + E) ||_2 <= sigma_risk
             cp_constraints.append(cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk)
             cp_constraints.append(E >> 0)
-            
+
             # [W w; w' 1] >> 0 (using 1 since we assume k=1 for non-ratio)
             # This is equivalent to W >> w @ w'
             L = cp.vstack([cp.hstack([W, cp.reshape(w, (n, 1), order="C")]),
                            cp.hstack([cp.reshape(w, (1, n), order="C"), np.array([[1.0]])])])
             cp_constraints.append(L >> 0)
-            
+
             risk_uncertainty = cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
             # Override standard risk term if robust
             risk_term = risk_uncertainty
@@ -261,10 +262,10 @@ def solve_mvo(
 
 def solve_evar(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
     t = cp.Variable()
@@ -305,11 +306,11 @@ def solve_evar(
 
 
 def solve_nonlinear(
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     n = len(moments["mu"])
     sigma = moments["sigma"]
     mu = moments["mu"].flatten()
@@ -340,12 +341,13 @@ def solve_nonlinear(
                 else:
                     if R is None:
                         raise ValueError(f"Historical returns R must be provided for alternative risk parity using {name}")
-                    from .risk import numerical_risk_contribution
                     import pyfolioanalytics.risk as pr
+
+                    from .risk import numerical_risk_contribution
                     func = getattr(pr, name, None)
                     if not func:
                         raise ValueError(f"Unsupported alternative risk measure: {name}")
-                    
+
                     obj_args = obj.get("arguments", {})
                     # Calculate numerical risk contribution
                     rc_abs = numerical_risk_contribution(w, R, func, **obj_args)
@@ -354,7 +356,7 @@ def solve_nonlinear(
                         return 1e10
                     rc = rc_abs / sum_rc
                     penalty_scale = 1e4  # Scale up for non-variance measures to enforce strict penalty
-                
+
                 if obj.get("min_concentration") or obj.get("min_difference"):
                     target = np.full(n, 1.0 / n)
                     out += penalty_scale * np.sum((rc - target) ** 2)
@@ -410,13 +412,14 @@ def solve_nonlinear(
 
 
 def solve_deoptim(
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
-    from .optimize import calculate_objective_measures
+) -> dict[str, Any]:
     from scipy.optimize import LinearConstraint
+
+    from .optimize import calculate_objective_measures
 
     n = len(moments["mu"])
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
@@ -457,7 +460,7 @@ def solve_deoptim(
     }
 
 
-def solve_kelly(R: np.ndarray, constraints: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+def solve_kelly(R: np.ndarray, constraints: dict[str, Any], **kwargs) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
 
@@ -485,8 +488,8 @@ def solve_kelly(R: np.ndarray, constraints: Dict[str, Any], **kwargs) -> Dict[st
 
 
 def solve_mdiv(
-    moments: Dict[str, Any], constraints: Dict[str, Any], **kwargs
-) -> Dict[str, Any]:
+    moments: dict[str, Any], constraints: dict[str, Any], **kwargs
+) -> dict[str, Any]:
     n = len(moments["mu"])
     sigma_assets = np.sqrt(np.diag(moments["sigma"]))
     Sigma = moments["sigma"]
@@ -525,10 +528,10 @@ def solve_mdiv(
 
 def solve_owa(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
 
@@ -592,10 +595,10 @@ def solve_owa(
 
 def solve_edar(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
     alpha_p = next(
@@ -608,7 +611,7 @@ def solve_edar(
     u = cp.Variable(T + 1)
     cum_ret = cp.Variable(T + 1)
     d = cp.Variable(T)
-    
+
     cp_constraints = []
     # Portfolio constraints (sum, bounds)
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
@@ -631,12 +634,12 @@ def solve_edar(
     t_evar = cp.Variable()
     z_evar = cp.Variable(nonneg=True)
     ui = cp.Variable(T)
-    
+
     # Minimize t + z * log(sum(exp((di - t)/z))/(T*alpha))
     # This is equivalent to minimizing t subject to:
     # sum(exp((di - t)/z)) <= T * alpha
     # which is sum(ui) <= T * alpha where ExpCone(di - t, z, ui)
-    
+
     cp_constraints.append(cp.sum(ui) <= T * alpha * z_evar)
     for i in range(T):
         cp_constraints.append(cp.ExpCone(d[i] - t_evar, z_evar, ui[i]))
@@ -652,10 +655,10 @@ def solve_edar(
 
 def solve_rlvar(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
     obj_config = next((o for o in objectives if o["name"] == "RLVaR"), {})
@@ -679,28 +682,28 @@ def solve_rlvar(
     theta = cp.Variable(T)
     epsilon = cp.Variable(T)
     omega = cp.Variable(T)
-    
+
     # Scale returns to improve stability
     scale = 100.0
     losses = -(R * scale) @ w
-    
+
     ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
-    
+
     cp_constraints.append(losses - t + epsilon + omega <= 0)
-    
+
     # Correct 3D Power Cone application
     x1 = cp.vstack([z * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
     y1 = psi * (1 + kappa) / kappa
     cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
-    
+
     x2 = omega / (1 - kappa)
     y2 = theta / kappa
     z2 = cp.vstack([-z / (2 * kappa)] * T).flatten(order="C")
     cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
-    
+
     obj = t + z * ln_k + cp.sum(psi + theta)
     prob = cp.Problem(cp.Minimize(obj), cp_constraints)
-    
+
     # Try different solvers
     try:
         prob.solve(solver=cp.SCS, verbose=False, eps=1e-5)
@@ -715,13 +718,13 @@ def solve_rlvar(
 
 def solve_mad(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
-    
+
     cp_constraints = []
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
         cp_constraints.append(cp.sum(w) == constraints["min_sum"])
@@ -732,15 +735,15 @@ def solve_mad(
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     mu_p = cp.mean(R @ w)
-    
+
     # MAD linear formulation: min sum(y)/T subject to y >= R@w - mu_p, y >= mu_p - R@w
     y = cp.Variable(T)
     cp_constraints.append(y >= R @ w - mu_p)
     cp_constraints.append(y >= mu_p - R @ w)
-    
+
     obj = cp.Minimize(cp.sum(y) / T)
     prob = cp.Problem(obj, cp_constraints)
-    
+
     try:
         prob.solve(verbose=False)
     except Exception:
@@ -751,13 +754,13 @@ def solve_mad(
 
 def solve_semi_mad(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
-    
+
     cp_constraints = []
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
         cp_constraints.append(cp.sum(w) == constraints["min_sum"])
@@ -768,14 +771,14 @@ def solve_semi_mad(
     _apply_linear_constraints(cp_constraints, w, constraints)
 
     mu_p = cp.mean(R @ w)
-    
+
     # Semi-MAD linear formulation: min sum(y)/T subject to y >= 0, y >= mu_p - R@w
     y = cp.Variable(T, nonneg=True)
     cp_constraints.append(y >= mu_p - R @ w)
-    
+
     obj = cp.Minimize(cp.sum(y) / T)
     prob = cp.Problem(obj, cp_constraints)
-    
+
     try:
         prob.solve(verbose=False)
     except Exception:
@@ -786,10 +789,10 @@ def solve_semi_mad(
 
 def solve_rldar(
     R: np.ndarray,
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     w = cp.Variable(n)
     obj_config = next((o for o in objectives if o["name"] == "RLDaR"), {})
@@ -799,7 +802,7 @@ def solve_rldar(
 
     # Scale returns to improve stability
     scale = 100.0
-    
+
     cp_constraints = []
     # Portfolio constraints
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
@@ -829,22 +832,22 @@ def solve_rldar(
     theta = cp.Variable(T)
     epsilon = cp.Variable(T)
     omega = cp.Variable(T)
-    
+
     ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
     cp_constraints.append(d - t_rlvar + epsilon + omega <= 0)
-    
+
     x1 = cp.vstack([z_rlvar * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
     y1 = psi * (1 + kappa) / kappa
     cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
-    
+
     x2 = omega / (1 - kappa)
     y2 = theta / kappa
     z2 = cp.vstack([-z_rlvar / (2 * kappa)] * T).flatten(order="C")
     cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
-    
+
     obj = t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)
     prob = cp.Problem(cp.Minimize(obj), cp_constraints)
-    
+
     try:
         prob.solve(solver=cp.SCS, eps=1e-5)
     except Exception:
@@ -858,11 +861,11 @@ def solve_rldar(
 
 def solve_portfolio_cvxpy(
     R: np.ndarray,
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Standard MVO solver using CVXPY.
     """
@@ -872,11 +875,11 @@ def solve_portfolio_cvxpy(
 
 def solve_noc(
     R: np.ndarray,
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     T, n = R.shape
     mu = moments.get("mu", np.mean(R, axis=0)).flatten()
     sigma = moments.get("sigma", np.cov(R, rowvar=False))
@@ -962,11 +965,11 @@ def solve_noc(
 
 
 def solve_cla(
-    moments: Dict[str, Any],
-    constraints: Dict[str, Any],
-    objectives: List[Dict[str, Any]],
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from .cla import CLA
 
     mu = moments["mu"].flatten()
