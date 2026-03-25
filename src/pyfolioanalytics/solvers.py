@@ -5,6 +5,15 @@ from typing import Dict, Any, List
 from scipy.optimize import minimize, differential_evolution
 
 
+def _apply_linear_constraints(cp_constraints, w, constraints):
+    if "linear_A" in constraints and "linear_b" in constraints:
+        for A, b in zip(constraints["linear_A"], constraints["linear_b"]):
+            cp_constraints.append(A @ w <= b)
+    if "linear_A_eq" in constraints and "linear_b_eq" in constraints:
+        for A_eq, b_eq in zip(constraints["linear_A_eq"], constraints["linear_b_eq"]):
+            cp_constraints.append(A_eq @ w == b_eq)
+
+
 def solve_mvo(
     moments: Dict[str, Any],
     constraints: Dict[str, Any],
@@ -145,6 +154,9 @@ def solve_mvo(
         if ptc is not None:
             tc_penalty = cp.sum(cp.multiply(cp.abs(w - w_init), ptc))
 
+    # Apply custom linear constraints
+    _apply_linear_constraints(cp_constraints, w, constraints)
+
     # Objectives
     return_obj = next(
         (o for o in objectives if o["type"] in ["return", "return_objective"]), None
@@ -271,6 +283,8 @@ def solve_evar(
     cp_constraints.extend(
         [w >= constraints["min"].values, w <= constraints["max"].values]
     )
+
+    _apply_linear_constraints(cp_constraints, w, constraints)
 
     objective = cp.Minimize(
         t
@@ -439,6 +453,7 @@ def solve_kelly(R: np.ndarray, constraints: Dict[str, Any], **kwargs) -> Dict[st
     cp_constraints.extend(
         [w >= constraints["min"].values, w <= constraints["max"].values]
     )
+    _apply_linear_constraints(cp_constraints, w, constraints)
     cp_constraints.append(1 + R @ w >= 1e-4)
 
     objective = cp.Maximize(cp.sum(cp.log(1 + R @ w)) / T)
@@ -509,6 +524,7 @@ def solve_owa(
     cp_constraints.extend(
         [w >= constraints["min"].values, w <= constraints["max"].values]
     )
+    _apply_linear_constraints(cp_constraints, w, constraints)
 
     owa_obj_config = next((o for o in objectives if o["name"] == "OWA"), None)
     if not owa_obj_config:
@@ -518,6 +534,10 @@ def solve_owa(
     if owa_weights is None:
         from .risk import owa_gmd_weights
         owa_weights = owa_gmd_weights(T)
+
+    # Ensure owa_weights is length T
+    if len(owa_weights) != T:
+        raise ValueError(f"owa_weights must have length {T}, got {len(owa_weights)}")
 
     # Sort weights descending for convex risk measure (Standard for sorted losses)
     if np.any(np.diff(owa_weights) > 1e-12):
@@ -580,6 +600,7 @@ def solve_edar(
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
     cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    _apply_linear_constraints(cp_constraints, w, constraints)
 
     cp_constraints.append(cum_ret[0] == 0)
     cp_constraints.append(u[0] == 0)
@@ -632,6 +653,7 @@ def solve_rlvar(
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
     cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    _apply_linear_constraints(cp_constraints, w, constraints)
 
     # RLVaR primal formulation
     t = cp.Variable()
@@ -674,6 +696,77 @@ def solve_rlvar(
     return {"status": prob.status, "weights": w.value, "obj_value": prob.value / scale if w.value is not None else None}
 
 
+def solve_mad(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    T, n = R.shape
+    w = cp.Variable(n)
+    
+    cp_constraints = []
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    _apply_linear_constraints(cp_constraints, w, constraints)
+
+    mu_p = cp.mean(R @ w)
+    
+    # MAD linear formulation: min sum(y)/T subject to y >= R@w - mu_p, y >= mu_p - R@w
+    y = cp.Variable(T)
+    cp_constraints.append(y >= R @ w - mu_p)
+    cp_constraints.append(y >= mu_p - R @ w)
+    
+    obj = cp.Minimize(cp.sum(y) / T)
+    prob = cp.Problem(obj, cp_constraints)
+    
+    try:
+        prob.solve(verbose=False)
+    except Exception:
+        return {"status": "failed", "weights": None}
+
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+
+def solve_semi_mad(
+    R: np.ndarray,
+    constraints: Dict[str, Any],
+    objectives: List[Dict[str, Any]],
+    **kwargs,
+) -> Dict[str, Any]:
+    T, n = R.shape
+    w = cp.Variable(n)
+    
+    cp_constraints = []
+    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
+        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
+    else:
+        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
+        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
+    cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    _apply_linear_constraints(cp_constraints, w, constraints)
+
+    mu_p = cp.mean(R @ w)
+    
+    # Semi-MAD linear formulation: min sum(y)/T subject to y >= 0, y >= mu_p - R@w
+    y = cp.Variable(T, nonneg=True)
+    cp_constraints.append(y >= mu_p - R @ w)
+    
+    obj = cp.Minimize(cp.sum(y) / T)
+    prob = cp.Problem(obj, cp_constraints)
+    
+    try:
+        prob.solve(verbose=False)
+    except Exception:
+        return {"status": "failed", "weights": None}
+
+    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
+
+
 def solve_rldar(
     R: np.ndarray,
     constraints: Dict[str, Any],
@@ -698,6 +791,7 @@ def solve_rldar(
         cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
         cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
     cp_constraints.extend([w >= constraints["min"].values, w <= constraints["max"].values])
+    _apply_linear_constraints(cp_constraints, w, constraints)
 
     # Drawdown tracking
     u = cp.Variable(T + 1)

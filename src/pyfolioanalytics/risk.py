@@ -7,6 +7,26 @@ import math
 import cvxpy as cp
 
 
+def MAD(weights: np.ndarray, R: np.ndarray) -> float:
+    """
+    Mean Absolute Deviation (MAD) of the portfolio returns.
+    MAD = 1/T * sum(|R_p - E[R_p]|)
+    """
+    p_returns = R @ weights
+    mu_p = np.mean(p_returns)
+    return np.mean(np.abs(p_returns - mu_p))
+
+
+def semi_MAD(weights: np.ndarray, R: np.ndarray) -> float:
+    """
+    Semi Mean Absolute Deviation (Downside MAD) of the portfolio returns.
+    Semi-MAD = 1/T * sum(max(E[R_p] - R_p, 0))
+    """
+    p_returns = R @ weights
+    mu_p = np.mean(p_returns)
+    return np.mean(np.maximum(mu_p - p_returns, 0.0))
+
+
 def VaR(
     weights: np.ndarray,
     mu: np.ndarray,

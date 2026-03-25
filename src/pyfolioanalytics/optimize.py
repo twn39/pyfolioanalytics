@@ -3,7 +3,10 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 from .portfolio import Portfolio
 from .moments import set_portfolio_moments
+from .random_portfolios import random_portfolios
 from .risk import (
+    MAD,
+    semi_MAD,
     VaR,
     ES,
     EVaR,
@@ -28,6 +31,8 @@ from .solvers import (
     solve_edar,
     solve_rlvar,
     solve_rldar,
+    solve_mad,
+    solve_semi_mad,
     solve_evar,
     solve_nonlinear,
 )
@@ -61,14 +66,18 @@ def calculate_objective_measures(
         obj_type = obj.get("type")
         obj_args = obj.get("arguments", {})
         
-        if obj_name == "VaR":
+        if obj_name == "VaR" and mu is not None and sigma is not None:
             measures[obj_name] = VaR(weights, mu, sigma, m3, m4, **obj_args)
-        elif obj_name == "ES":
+        elif obj_name == "ES" and mu is not None and sigma is not None:
             measures[obj_name] = ES(weights, mu, sigma, m3, m4, **obj_args)
         elif obj_name == "EVaR" and R is not None:
             measures[obj_name] = EVaR(weights, R, **obj_args)
         elif obj_name == "EDaR" and R is not None:
             measures[obj_name] = EDaR(weights, R, **obj_args)
+        elif obj_name == "MAD" and R is not None:
+            measures[obj_name] = MAD(weights, R)
+        elif obj_name == "semi_MAD" and R is not None:
+            measures[obj_name] = semi_MAD(weights, R)
         elif obj_name == "RLVaR" and R is not None:
             measures[obj_name] = RLVaR(weights, R, **obj_args)
         elif obj_name == "RLDaR" and R is not None:
@@ -151,7 +160,57 @@ def optimize_portfolio(
         w_nco = nco_optimization(R, **kwargs)
         return {"weights": w_nco, "objective_measures": calculate_objective_measures(w_nco.values, moments, portfolio.objectives, R=R.values, constraints=constraints), "status": "optimal", "moments": moments, "portfolio": portfolio}
 
-    # 5. Direct optimization for specific measures (only if NO risk budget)
+    # 5. Random Portfolios Engine
+    if optimize_method == "random":
+        rp_kwargs = kwargs.copy()
+        permutations = rp_kwargs.pop("permutations", 2000)
+        rp_method = rp_kwargs.pop("rp_method", "transform")
+        # generate random portfolios
+        rp_weights = random_portfolios(portfolio, permutations=permutations, method=rp_method, **rp_kwargs)
+        
+        if len(rp_weights) == 0:
+            return {"weights": None, "status": "infeasible", "moments": moments, "portfolio": portfolio}
+            
+        best_score = float("inf")
+        best_w = None
+        best_measures = {}
+        R_vals = R.values if R is not None else None
+        
+        enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
+        
+        for w in rp_weights:
+            measures = calculate_objective_measures(w, moments, enabled_objs, R=R_vals, constraints=constraints)
+            
+            # Penalize constraint violations
+            penalty = 0.0
+            
+            # Position Limit Penalty
+            if "max_pos" in constraints:
+                pos_count = np.sum(w > 1e-6)
+                if pos_count > constraints["max_pos"]:
+                    penalty += (pos_count - constraints["max_pos"]) * 1e4
+            
+            # Score objective
+            score = penalty
+            for obj in enabled_objs:
+                mult = obj.get("multiplier", 1.0)
+                val = measures.get(obj["name"], 0.0)
+                target = obj.get("target")
+                if target is not None:
+                    # Target penalty: (val - target)^2
+                    score += mult * (val - target) ** 2
+                else:
+                    score += mult * val
+            
+            if score < best_score:
+                best_score = score
+                best_w = w
+                best_measures = measures
+                
+        final_w = pd.Series(best_w, index=R.columns)
+        return {"weights": final_w, "objective_measures": best_measures, "status": "optimal", "moments": moments, "portfolio": portfolio}
+
+    # 6. Direct optimization for specific measures (only if NO risk budget)
     result = None
     enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
     # IMPORTANT: Risk budget must use solve_mvo/solve_portfolio_cvxpy
@@ -168,6 +227,10 @@ def optimize_portfolio(
             result = solve_rlvar(R.values, constraints, portfolio.objectives, **kwargs)
         elif any(obj["name"] == "RLDaR" for obj in enabled_objs):
             result = solve_rldar(R.values, constraints, portfolio.objectives, **kwargs)
+        elif any(obj["name"] == "MAD" for obj in enabled_objs):
+            result = solve_mad(R.values, constraints, portfolio.objectives, **kwargs)
+        elif any(obj["name"] == "semi_MAD" for obj in enabled_objs):
+            result = solve_semi_mad(R.values, constraints, portfolio.objectives, **kwargs)
         elif any(obj["name"] == "L_Moment_CRM" for obj in enabled_objs):
             obj_conf = next(o for o in portfolio.objectives if o["name"] == "L_Moment_CRM")
             w_owa = owa_l_moment_crm_weights(R.shape[0], **obj_conf.get("arguments", {}))
@@ -215,7 +278,9 @@ def optimize_portfolio_multi_layer(
     for meta_asset, sub_port in portfolio.sub_portfolios.items():
         res = optimize_portfolio(R, sub_port, **kwargs)
         sub_results[meta_asset] = res
-        sub_returns[meta_asset] = R[list(sub_port.assets.keys())] @ res["weights"]
+        # Multiply underlying asset returns by their weights in the sub-portfolio
+        leaf_assets = list(res["weights"].index)
+        sub_returns[meta_asset] = R[leaf_assets] @ res["weights"]
 
     meta_R = pd.DataFrame(sub_returns)
     other_assets = [a for a in portfolio.root.assets.keys() if a not in portfolio.sub_portfolios]
@@ -224,15 +289,20 @@ def optimize_portfolio_multi_layer(
 
     root_res = optimize_portfolio(meta_R, portfolio.root, **kwargs)
     
+    # final_weights should accumulate weights for all leaf assets found in R
     final_weights = pd.Series(0.0, index=R.columns)
     root_weights = root_res["weights"]
 
     for meta_asset, w_meta in root_weights.items():
         if meta_asset in sub_results:
             w_sub = sub_results[meta_asset]["weights"]
-            final_weights.loc[w_sub.index] += w_sub * w_meta
+            # Add scaled sub-weights to the final weights
+            for asset, w in w_sub.items():
+                if asset in final_weights.index:
+                    final_weights.loc[asset] += w * w_meta
         else:
-            final_weights.loc[meta_asset] += w_meta
+            if meta_asset in final_weights.index:
+                final_weights.loc[meta_asset] += w_meta
 
     full_assets_port = Portfolio(assets=list(R.columns))
     moments = set_portfolio_moments(R, full_assets_port)

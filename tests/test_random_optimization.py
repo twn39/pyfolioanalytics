@@ -1,0 +1,37 @@
+import pytest
+import pandas as pd
+import numpy as np
+from pyfolioanalytics.portfolio import Portfolio
+from pyfolioanalytics.optimize import optimize_portfolio
+
+def test_random_portfolios_optimization(stocks_data):
+    # Setup simple data
+    R = stocks_data.iloc[:, :4]
+    
+    # Create portfolio
+    port = Portfolio(assets=list(R.columns))
+    port.add_constraint(type="weight_sum", min_sum=0.99, max_sum=1.01)
+    port.add_constraint(type="box", min=0.05, max=0.6)
+    
+    # Add an objective that random search should optimize
+    port.add_objective(type="risk", name="StdDev")
+    port.add_objective(type="return", name="mean")
+    
+    # Test random optimization using transform method
+    res = optimize_portfolio(
+        R, port, optimize_method="random", rp_method="transform", permutations=500
+    )
+    
+    assert res["status"] == "optimal"
+    assert res["weights"] is not None
+    weights = res["weights"]
+    
+    # Check constraints
+    assert (weights >= 0.05 - 1e-5).all()
+    assert (weights <= 0.6 + 1e-5).all()
+    assert abs(weights.sum() - 1.0) < 0.02
+    
+    # Check objectives are computed
+    assert "StdDev" in res["objective_measures"]
+    assert "mean" in res["objective_measures"]
+

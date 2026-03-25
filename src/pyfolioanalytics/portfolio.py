@@ -154,6 +154,15 @@ class Portfolio:
             else:
                 delta_mu_vec = np.array(delta_mu)
             constraint.update({"delta_mu": pd.Series(delta_mu_vec, index=asset_names)})
+        elif type == "linear":
+            A = kwargs.get("A")
+            b = kwargs.get("b")
+            A_eq = kwargs.get("A_eq")
+            b_eq = kwargs.get("b_eq")
+            if A is not None and b is not None:
+                constraint.update({"A": np.array(A), "b": np.array(b)})
+            if A_eq is not None and b_eq is not None:
+                constraint.update({"A_eq": np.array(A_eq), "b_eq": np.array(b_eq)})
 
         self.constraints.append(constraint)
         return self
@@ -211,6 +220,19 @@ class Portfolio:
             elif ctype in ["box", "long_only"]:
                 res["min"] = np.maximum(res["min"], constr["min"])
                 res["max"] = np.minimum(res["max"], constr["max"])
+            elif ctype == "linear":
+                if "A" in constr and "b" in constr:
+                    if "linear_A" not in res:
+                        res["linear_A"] = []
+                        res["linear_b"] = []
+                    res["linear_A"].append(constr["A"])
+                    res["linear_b"].append(constr["b"])
+                if "A_eq" in constr and "b_eq" in constr:
+                    if "linear_A_eq" not in res:
+                        res["linear_A_eq"] = []
+                        res["linear_b_eq"] = []
+                    res["linear_A_eq"].append(constr["A_eq"])
+                    res["linear_b_eq"].append(constr["b_eq"])
             else:
                 res.update(
                     {k: v for k, v in constr.items() if k not in ["type", "enabled"]}

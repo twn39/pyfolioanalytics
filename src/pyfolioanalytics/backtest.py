@@ -1,5 +1,6 @@
 import pandas as pd
-from typing import Dict, Any, List, Union
+import numpy as np
+from typing import Dict, Any, List, Union, Optional
 from .portfolio import Portfolio, RegimePortfolio
 from .optimize import optimize_portfolio
 
@@ -10,11 +11,76 @@ class BacktestResult:
         weights: pd.DataFrame,
         returns: pd.Series,
         opt_results: List[Dict[str, Any]],
+        eop_weights: Optional[pd.DataFrame] = None,
+        turnover: Optional[pd.Series] = None,
+        net_returns: Optional[pd.Series] = None,
     ):
         self.weights = weights
         self.returns = returns
         self.portfolio_returns = returns  # Alias for backward compatibility
         self.opt_results = opt_results
+        self.eop_weights = eop_weights if eop_weights is not None else weights.copy()
+        self.turnover = turnover if turnover is not None else pd.Series(0.0, index=returns.index)
+        self.net_returns = net_returns if net_returns is not None else returns.copy()
+
+    def summary(self, risk_free_rate: float = 0.0) -> pd.DataFrame:
+        """
+        Calculate key performance and risk metrics (Tearsheet) for the backtest.
+        Returns a DataFrame comparing Gross vs Net returns.
+        """
+        metrics = {}
+        
+        for ret_type, ret_series in [("Gross", self.returns), ("Net", self.net_returns)]:
+            if ret_series.empty:
+                continue
+                
+            # Basic stats
+            # Assuming daily returns for annualized factors if not specified, 
+            # ideally we should infer freq from index, but 252 is standard for daily trading
+            # We'll calculate total return first to be safe
+            cum_ret = (1 + ret_series).prod() - 1
+            n_days = len(ret_series)
+            cagr = (1 + cum_ret) ** (252 / max(1, n_days)) - 1
+            
+            ann_vol = ret_series.std() * np.sqrt(252)
+            
+            # Sharpe Ratio
+            excess_ret = ret_series - (risk_free_rate / 252)
+            sharpe = (excess_ret.mean() / ret_series.std()) * np.sqrt(252) if ret_series.std() > 0 else np.nan
+            
+            # Sortino Ratio
+            downside_ret = ret_series[ret_series < 0]
+            downside_vol = downside_ret.std() * np.sqrt(252)
+            sortino = (excess_ret.mean() * np.sqrt(252)) / downside_vol if downside_vol > 0 else np.nan
+            
+            # Max Drawdown
+            cum_vals = (1 + ret_series).cumprod()
+            rolling_max = cum_vals.cummax()
+            drawdowns = (cum_vals / rolling_max) - 1.0
+            max_dd = drawdowns.min()
+            
+            # Calmar Ratio
+            calmar = cagr / abs(max_dd) if abs(max_dd) > 0 else np.nan
+            
+            metrics[ret_type] = {
+                "Total Return": cum_ret,
+                "CAGR": cagr,
+                "Annualized Volatility": ann_vol,
+                "Sharpe Ratio": sharpe,
+                "Sortino Ratio": sortino,
+                "Max Drawdown": max_dd,
+                "Calmar Ratio": calmar
+            }
+            
+        # Add turnover stat (same for gross/net)
+        total_turnover = self.turnover.sum()
+        avg_turnover = self.turnover[self.turnover > 0].mean() if (self.turnover > 0).any() else 0.0
+        
+        df = pd.DataFrame(metrics)
+        df.loc["Total Turnover"] = total_turnover
+        df.loc["Avg Turnover per Rebalance"] = avg_turnover
+        
+        return df
 
 
 def backtest_portfolio(
@@ -22,10 +88,12 @@ def backtest_portfolio(
     portfolio: Union[Portfolio, RegimePortfolio],
     rebalance_periods: str = "ME",
     optimize_method: str = "ROI",
+    ptc: float = 0.0,
     **kwargs,
 ) -> BacktestResult:
     """
-    Simple walk-forward backtest with rebalancing.
+    Simple walk-forward backtest with rebalancing, including weight drift,
+    turnover calculation, and proportional transaction costs (PTC).
     """
     # Handle rebalance_on from PortfolioAnalytics style
     rebalance_on = kwargs.get("rebalance_on")
@@ -53,9 +121,15 @@ def backtest_portfolio(
     rolling_window = kwargs.get("rolling_window")
     regimes = kwargs.get("regimes")
 
-    all_weights = []
+    all_bop_weights = []
+    all_eop_weights = []
+    all_returns = []
+    all_net_returns = []
+    all_turnover = []
     all_opt_results = []
+    
     current_weights = pd.Series(1.0 / len(R.columns), index=R.columns)
+    last_eop_weights = pd.Series(0.0, index=R.columns)
 
     for i in range(len(rebal_dates) - 1):
         start_date = rebal_dates[i]
@@ -72,7 +146,6 @@ def backtest_portfolio(
             R_train = R.loc[R.index < start_date]
 
         if len(R_train) >= 2:
-            active_portfolio = portfolio
             if isinstance(portfolio, RegimePortfolio):
                 if regimes is not None:
                     # Use the regime of the current rebalance date
@@ -80,6 +153,8 @@ def backtest_portfolio(
                     active_portfolio = portfolio.get_portfolio(current_regime)
                 else:
                     active_portfolio = portfolio.get_portfolio("default")
+            else:
+                active_portfolio = portfolio
 
             res = optimize_portfolio(
                 R_train, active_portfolio, optimize_method=optimize_method, **kwargs
@@ -99,19 +174,86 @@ def backtest_portfolio(
 
         # Apply weights to the period
         R_period = R[start_date:end_date]
-        if not R_period.empty:
-            weights_df = pd.DataFrame(
-                [current_weights] * len(R_period), index=R_period.index
-            )
-            all_weights.append(weights_df)
+        if R_period.empty:
+            continue
+            
+        # 1. Calculate Turnover at rebalance date (start_date)
+        # Sum of absolute changes between target current_weights and last end-of-period weights
+        turnover_val = np.abs(current_weights - last_eop_weights).sum() / 2.0
+        
+        # 2. Calculate Drift
+        # eop_weights(t) = bop_weights(t) * (1 + R(t)) / (1 + R_port(t))
+        bop_weights_matrix = np.zeros(R_period.shape)
+        eop_weights_matrix = np.zeros(R_period.shape)
+        port_ret_array = np.zeros(len(R_period))
+        net_ret_array = np.zeros(len(R_period))
+        turnover_array = np.zeros(len(R_period))
+        
+        # First day of the period pays the turnover cost
+        turnover_array[0] = turnover_val
+        
+        w = current_weights.values
+        R_vals = R_period.values
+        
+        for t in range(len(R_period)):
+            # Beginning of period weights
+            bop_weights_matrix[t, :] = w
+            
+            # Portfolio return for the day
+            r_p = np.dot(w, R_vals[t])
+            port_ret_array[t] = r_p
+            
+            # Net return
+            if t == 0:
+                net_ret_array[t] = r_p - turnover_val * ptc
+            else:
+                net_ret_array[t] = r_p
+                
+            # End of period weights (drift)
+            # w_{t+1} = w_t * (1 + R_t) / (1 + R_p)
+            w_next = w * (1 + R_vals[t])
+            sum_w = np.sum(w_next)
+            if sum_w > 0:
+                w = w_next / sum_w
+            eop_weights_matrix[t, :] = w
+            
+        last_eop_weights = pd.Series(w, index=R.columns)
+        
+        all_bop_weights.append(pd.DataFrame(bop_weights_matrix, index=R_period.index, columns=R.columns))
+        all_eop_weights.append(pd.DataFrame(eop_weights_matrix, index=R_period.index, columns=R.columns))
+        all_returns.append(pd.Series(port_ret_array, index=R_period.index))
+        all_net_returns.append(pd.Series(net_ret_array, index=R_period.index))
+        all_turnover.append(pd.Series(turnover_array, index=R_period.index))
 
-    if not all_weights:
+    if not all_bop_weights:
         return BacktestResult(pd.DataFrame(), pd.Series(), [])
 
-    full_weights = pd.concat(all_weights)
-    port_returns = (full_weights * R.loc[full_weights.index]).sum(axis=1)
+    # Filter out duplicate dates at period boundaries
+    # rebal_dates chunks might overlap on end_date/start_date depending on indexing.
+    # R[start_date:end_date] is inclusive on both sides in pandas for datetime slices.
+    # To avoid double counting the boundary days, we should drop duplicates.
+    
+    full_weights = pd.concat(all_bop_weights)
+    full_eop = pd.concat(all_eop_weights)
+    full_returns = pd.concat(all_returns)
+    full_net_returns = pd.concat(all_net_returns)
+    full_turnover = pd.concat(all_turnover)
+    
+    # Remove duplicates, keeping the first occurrence (which would be the rebalance day with new weights)
+    full_weights = full_weights[~full_weights.index.duplicated(keep='first')]
+    full_eop = full_eop[~full_eop.index.duplicated(keep='first')]
+    full_returns = full_returns[~full_returns.index.duplicated(keep='first')]
+    full_net_returns = full_net_returns[~full_net_returns.index.duplicated(keep='first')]
+    full_turnover = full_turnover[~full_turnover.index.duplicated(keep='first')]
 
-    return BacktestResult(full_weights, port_returns, all_opt_results)
+    return BacktestResult(
+        weights=full_weights, 
+        returns=full_returns, 
+        opt_results=all_opt_results,
+        eop_weights=full_eop,
+        turnover=full_turnover,
+        net_returns=full_net_returns
+    )
 
 
 # Alias for backward compatibility

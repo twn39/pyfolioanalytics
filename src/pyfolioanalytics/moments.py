@@ -143,6 +143,31 @@ def shrink_comoments(M_sample: np.ndarray, M_target: np.ndarray, alpha: float = 
     return (1 - alpha) * M_sample + alpha * M_target
 
 
+def ewma_moments(R: np.ndarray, span: int = 36) -> Dict[str, Any]:
+    """
+    Calculate Exponentially Weighted Moving Average (EWMA) mean and covariance.
+    """
+    alpha = 2.0 / (span + 1)
+    T, N = R.shape
+    weights = (1 - alpha) ** np.arange(T - 1, -1, -1)
+    weights /= weights.sum()
+    
+    mu = np.average(R, weights=weights, axis=0)
+    R_centered = R - mu
+    # unbiased-like normalization can be done, but keeping it simple with weights
+    cov = (weights * R_centered.T) @ R_centered
+    return {"mu": mu.reshape(-1, 1), "sigma": cov}
+
+
+def semi_covariance(R: np.ndarray, benchmark: float = 0.0) -> np.ndarray:
+    """
+    Calculate semi-covariance matrix (downside covariance), penalizing returns below benchmark.
+    """
+    R_down = np.minimum(R - benchmark, 0.0)
+    T = R.shape[0]
+    return (R_down.T @ R_down) / T
+
+
 def ccc_garch_moments(R: np.ndarray, mu: Optional[np.ndarray] = None) -> Dict[str, Any]:
     """
     Constant Conditional Correlation (CCC) GARCH Moment Model.
@@ -286,6 +311,15 @@ def set_portfolio_moments(
         moments["sigma"] = denoised_sigma
     elif method == "garch":
         moments = ccc_garch_moments(R_filtered.values)
+    elif method == "ewma":
+        span = kwargs.get("span", 36)
+        res_ewma = ewma_moments(R_filtered.values, span=span)
+        moments["mu"] = res_ewma["mu"]
+        moments["sigma"] = res_ewma["sigma"]
+    elif method == "semi_covariance":
+        benchmark = kwargs.get("benchmark", 0.0)
+        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+        moments["sigma"] = semi_covariance(R_filtered.values, benchmark=benchmark)
     else:
         raise NotImplementedError(f"Method '{method}' is not implemented.")
 

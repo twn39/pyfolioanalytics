@@ -51,3 +51,47 @@ def test_l_moment_crm_optimization_smoke():
     # Verify measure calculation in results
     assert "L_Moment_CRM" in res["objective_measures"]
     assert res["objective_measures"]["L_Moment_CRM"] > 0
+
+def test_mad_optimization_smoke():
+    np.random.seed(42)
+    T, N = 100, 5
+    R_raw = np.random.randn(T, N) * 0.01 + 0.001
+    asset_names = [f"Asset.{i+1}" for i in range(N)]
+    R_df = pd.DataFrame(R_raw, columns=asset_names)
+    
+    port = Portfolio(assets=asset_names)
+    port.add_constraint(type="full_investment")
+    port.add_constraint(type="long_only")
+    
+    port.add_objective(name="MAD", type="risk")
+    
+    res = optimize_portfolio(R_df, port)
+    
+    assert res["status"] in ["optimal", "feasible"]
+    weights = res["weights"]
+    assert np.allclose(weights.sum(), 1.0)
+    assert np.all(weights >= -1e-7)
+    
+    assert "MAD" in res["objective_measures"]
+
+def test_semi_mad_optimization_smoke():
+    np.random.seed(42)
+    T, N = 100, 5
+    R_raw = np.random.randn(T, N) * 0.01 + 0.001
+    asset_names = [f"Asset.{i+1}" for i in range(N)]
+    R_df = pd.DataFrame(R_raw, columns=asset_names)
+    
+    port = Portfolio(assets=asset_names)
+    port.add_constraint(type="full_investment")
+    port.add_constraint(type="long_only")
+    
+    port.add_objective(name="semi_MAD", type="risk")
+    
+    res = optimize_portfolio(R_df, port)
+    
+    assert res["status"] in ["optimal", "feasible"]
+    weights = res["weights"]
+    assert np.allclose(weights.sum(), 1.0)
+    assert np.all(weights >= -1e-7)
+    
+    assert "semi_MAD" in res["objective_measures"]

@@ -61,6 +61,17 @@
 -   **自动化断言**: 在 `tests/` 下有超过 100 个测试用例，确保 Python 与 R 的计算结果在 `1e-7` 精度下一致。
 -   **透明逻辑**: 所有基准生成的 R 脚本均保留在 `scripts/` 目录，供用户复现。
 
+## 📚 官方文档
+
+欢迎查阅模块化的详细开发与使用文档（包含核心数学原理说明及丰富的代码示例）：
+
+1. [组合规格定义 (Portfolio Specification)](docs/portfolio_specification.md) - `portfolio.py`
+2. [参数与矩估计 (Parameter Estimation)](docs/parameter_estimation.md) - `moments.py`, `rmt.py`
+3. [风险度量与测度 (Risk Measures)](docs/risk_measures.md) - `risk.py`
+4. [核心优化引擎 (Optimization Engine)](docs/optimization.md) - `optimize.py`, `solvers.py`
+5. [机器学习与图论配置 (Machine Learning)](docs/machine_learning.md) - `ml.py`, `dbht.py`
+6. [回测与可视化 (Backtesting & Plots)](docs/backtest_and_plots.md) - `backtest.py`, `plots.py`
+
 ---
 
 ## 📂 项目结构

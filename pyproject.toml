@@ -12,6 +12,7 @@ dependencies = [
     "cvxpy>=1.8.1",
     "numpy>=2.4.2",
     "pandas>=3.0.1",
+    "plotly>=6.6.0",
     "pyscipopt>=6.1.0",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
@@ -37,6 +38,8 @@ dev = [
     "ty>=0.0.20",
     "yfinance>=1.2.0",
     "riskfolio-lib>=7.2.1",
+    "kaleido>=1.2.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.pytest.ini_options]

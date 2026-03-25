@@ -64,3 +64,33 @@ def test_denoised_covariance_fixed():
     assert not np.array_equal(moments_raw["sigma"], moments_denoised["sigma"])
     # But it should be a valid covariance matrix
     assert np.all(np.linalg.eigvals(moments_denoised["sigma"]) >= -1e-10)
+
+def test_ewma_moments():
+    np.random.seed(42)
+    T, N = 100, 5
+    R = np.random.randn(T, N)
+    R_df = pd.DataFrame(R, columns=[f"Asset.{i+1}" for i in range(N)])
+    port = Portfolio(assets=list(R_df.columns))
+
+    moments = set_portfolio_moments(R_df, port, method="ewma", span=36)
+    assert "mu" in moments
+    assert "sigma" in moments
+    assert moments["mu"].shape == (N, 1)
+    assert moments["sigma"].shape == (N, N)
+    # Check PSD
+    assert np.all(np.linalg.eigvals(moments["sigma"]) >= -1e-10)
+
+def test_semi_covariance_moments():
+    np.random.seed(42)
+    T, N = 100, 5
+    R = np.random.randn(T, N)
+    R_df = pd.DataFrame(R, columns=[f"Asset.{i+1}" for i in range(N)])
+    port = Portfolio(assets=list(R_df.columns))
+
+    moments = set_portfolio_moments(R_df, port, method="semi_covariance", benchmark=0.0)
+    assert "mu" in moments
+    assert "sigma" in moments
+    assert moments["mu"].shape == (N, 1)
+    assert moments["sigma"].shape == (N, N)
+    # Semi-covariance must be PSD
+    assert np.all(np.linalg.eigvals(moments["sigma"]) >= -1e-10)
