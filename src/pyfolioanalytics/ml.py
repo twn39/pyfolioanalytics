@@ -4,6 +4,7 @@ from scipy.cluster.hierarchy import linkage, leaves_list, fcluster
 from scipy.spatial.distance import squareform
 from typing import List
 from .dbht import DBHTs
+from .codependence import get_codependence_matrix, get_distance_matrix
 
 
 def get_ivp(cov: np.ndarray) -> np.ndarray:
@@ -64,23 +65,30 @@ def get_recursive_bisection(
 
 def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
-    corr = R.corr().values
     cov = R.cov().values
+    
+    # 1. Compute Codependence & Distance Matrix
+    codep_method = kwargs.get("codependence", "pearson")
+    dist_method = kwargs.get("distance", "standard")
+    
+    if codep_method == "custom" and "custom_matrix" in kwargs:
+        corr = kwargs["custom_matrix"]
+    else:
+        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+    if dist_method == "custom" and "custom_distance" in kwargs:
+        dist = kwargs["custom_distance"]
+    else:
+        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
     
     clustering = kwargs.get("clustering", "linkage")
     
+    # 2. Hierarchical Clustering
     if clustering == "DBHT":
-        # S is similarity, D is dissimilarity
         S = corr + 1.0
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
-        # T8, Rpm, Adjv, Dpm, Mv, Z = DBHTs(dist, S)
-        # We only need Z for HRP/HERC
         res = DBHTs(dist, S)
         Z = res[5]
     else:
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
         method = kwargs.get("linkage_method", "single")
         Z = linkage(squareform(dist), method=method)
         
@@ -95,20 +103,30 @@ def hrp_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
 
 def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     asset_names = R.columns.tolist()
-    corr = R.corr().values
     cov = R.cov().values
+    
+    # 1. Compute Codependence & Distance Matrix
+    codep_method = kwargs.get("codependence", "pearson")
+    dist_method = kwargs.get("distance", "standard")
+    
+    if codep_method == "custom" and "custom_matrix" in kwargs:
+        corr = kwargs["custom_matrix"]
+    else:
+        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+    if dist_method == "custom" and "custom_distance" in kwargs:
+        dist = kwargs["custom_distance"]
+    else:
+        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
     
     clustering = kwargs.get("clustering", "linkage")
     
+    # 2. Hierarchical Clustering
     if clustering == "DBHT":
         S = corr + 1.0
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
         res = DBHTs(dist, S)
         Z = res[5]
     else:
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
         method = kwargs.get("linkage_method", "ward")
         Z = linkage(squareform(dist), method=method)
         
@@ -125,19 +143,29 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     from .solvers import solve_mvo
 
     asset_names = R.columns.tolist()
-    corr = R.corr().values
+    
+    # 1. Compute Codependence & Distance Matrix
+    codep_method = kwargs.get("codependence", "pearson")
+    dist_method = kwargs.get("distance", "standard")
+    
+    if codep_method == "custom" and "custom_matrix" in kwargs:
+        corr = kwargs["custom_matrix"]
+    else:
+        corr = get_codependence_matrix(R, method=codep_method, **kwargs)
+        
+    if dist_method == "custom" and "custom_distance" in kwargs:
+        dist = kwargs["custom_distance"]
+    else:
+        dist = get_distance_matrix(corr, method=dist_method, **kwargs)
+
     clustering = kwargs.get("clustering", "linkage")
 
+    # 2. Hierarchical Clustering
     if clustering == "DBHT":
         S = corr + 1.0
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
         res = DBHTs(dist, S)
-        # T8 is the cluster membership vector
-        clusters = res[0].flatten() + 1 # Convert to 1-indexed for consistency
+        clusters = res[0].flatten() + 1 
     else:
-        dist = np.sqrt(0.5 * (1 - corr))
-        np.fill_diagonal(dist, 0)
         method = kwargs.get("linkage_method", "ward")
         link = linkage(squareform(dist), method=method)
         max_clusters = kwargs.get("max_clusters", 3)
