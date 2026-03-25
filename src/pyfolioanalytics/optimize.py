@@ -27,15 +27,9 @@ from .solvers import (
     solve_mdiv,
     solve_noc,
     solve_cla,
-    solve_owa,
-    solve_edar,
-    solve_rlvar,
-    solve_rldar,
-    solve_mad,
-    solve_semi_mad,
-    solve_evar,
     solve_nonlinear,
 )
+from .convex_solvers import ConvexOptimizer, RISK_STRATEGIES
 
 
 def calculate_objective_measures(
@@ -210,37 +204,34 @@ def optimize_portfolio(
         final_w = pd.Series(best_w, index=R.columns)
         return {"weights": final_w, "objective_measures": best_measures, "status": "optimal", "moments": moments, "portfolio": portfolio}
 
-    # 6. Direct optimization for specific measures (only if NO risk budget)
+    # 6. Direct optimization for specific measures
     result = None
     enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
-    # IMPORTANT: Risk budget must use solve_mvo/solve_portfolio_cvxpy
     has_risk_budget = any(obj.get("type") == "risk_budget" for obj in enabled_objs)
     
-    if not has_risk_budget:
-        if any(obj["name"] == "EVaR" for obj in enabled_objs):
-            result = solve_evar(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "OWA" for obj in enabled_objs):
-            result = solve_owa(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "EDaR" for obj in enabled_objs):
-            result = solve_edar(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "RLVaR" for obj in enabled_objs):
-            result = solve_rlvar(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "RLDaR" for obj in enabled_objs):
-            result = solve_rldar(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "MAD" for obj in enabled_objs):
-            result = solve_mad(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "semi_MAD" for obj in enabled_objs):
-            result = solve_semi_mad(R.values, constraints, portfolio.objectives, **kwargs)
-        elif any(obj["name"] == "L_Moment_CRM" for obj in enabled_objs):
-            obj_conf = next(o for o in portfolio.objectives if o["name"] == "L_Moment_CRM")
-            w_owa = owa_l_moment_crm_weights(R.shape[0], **obj_conf.get("arguments", {}))
+    if not has_risk_budget and optimize_method not in ["Kelly", "MDIV", "NOC", "CLA", "random", "HRP", "HERC", "NCO"]:
+        risk_obj = next((o for o in enabled_objs if o.get("type") in ["risk", "portfolio_risk_objective"]), None)
+        risk_name = risk_obj.get("name", "StdDev") if risk_obj else "StdDev"
+        
+        if risk_name == "L_Moment_CRM":
+            from .risk import owa_l_moment_crm_weights
             import copy
-            new_objectives = copy.deepcopy(portfolio.objectives)
-            for o in new_objectives:
-                if o["name"] == "L_Moment_CRM":
+            w_owa = owa_l_moment_crm_weights(R.shape[0], **risk_obj.get("arguments", {}))
+            opt_portfolio = copy.deepcopy(portfolio)
+            for o in opt_portfolio.objectives:
+                if o.get("name") == "L_Moment_CRM":
                     o["name"] = "OWA"
+                    if "arguments" not in o:
+                        o["arguments"] = {}
                     o["arguments"]["owa_weights"] = w_owa
-            result = solve_owa(R.values, constraints, new_objectives, **kwargs)
+            risk_name = "OWA"
+            opt_objs = opt_portfolio.objectives
+        else:
+            opt_objs = portfolio.objectives
+
+        if risk_name in RISK_STRATEGIES or risk_name in ["var"]:
+            opt = ConvexOptimizer(moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs)
+            result = opt.solve()
 
     if result is None:
         if optimize_method == "Kelly":
@@ -252,11 +243,11 @@ def optimize_portfolio(
         elif optimize_method == "CLA":
             result = solve_cla(moments, constraints, portfolio.objectives, **kwargs)
         elif has_risk_budget:
-            # Risk budget (ERC) requires nonlinear solver — risk contributions are nonlinear in w
-            result = solve_nonlinear(moments, constraints, portfolio.objectives, R=R.values, **kwargs)
+            result = solve_nonlinear(moments, constraints, portfolio.objectives, R=R.values if R is not None else None, **kwargs)
         else:
-            from .solvers import solve_mvo
-            result = solve_mvo(moments, constraints, portfolio.objectives, **kwargs)
+            # Fallback (should be covered by ConvexOptimizer now)
+            opt = ConvexOptimizer(moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs)
+            result = opt.solve()
 
     if result.get("status") in ["optimal", "feasible", "optimal_inaccurate"]:
         w = result["weights"]

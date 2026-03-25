@@ -49,9 +49,21 @@ def test_frontier_on_real_data(stock_returns):
 
     frontier = create_efficient_frontier(R, portfolio, n_portfolios=5)
 
-    assert len(frontier) >= 3
+    assert len(frontier) == 5
     assert "mean" in frontier.columns
     assert "StdDev" in frontier.columns
+    
+    # 1. Monotonicity checks: As risk increases, expected return must strictly increase
+    returns = frontier["mean"].values
+    risks = frontier["StdDev"].values
+    
+    assert np.all(np.diff(returns) > 1e-7), "Frontier returns must be strictly increasing"
+    assert np.all(np.diff(risks) > 1e-7), "Frontier risks (StdDev) must be strictly increasing"
+    
+    # 2. Feasibility check: The sum of weights must equal 1 for every portfolio on the frontier
+    weight_cols = [col for col in frontier.columns if col not in ["mean", "sd", "StdDev"]]
+    weights = frontier[weight_cols].values
+    assert np.allclose(weights.sum(axis=1), 1.0)
     # Check if risk is increasing with return
     assert np.all(np.diff(frontier["StdDev"].values) >= -1e-7)
 

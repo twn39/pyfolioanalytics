@@ -26,10 +26,18 @@ def test_random_portfolios_optimization(stocks_data):
     assert res["weights"] is not None
     weights = res["weights"]
     
-    # Check constraints
-    assert (weights >= 0.05 - 1e-5).all()
-    assert (weights <= 0.6 + 1e-5).all()
-    assert abs(weights.sum() - 1.0) < 0.02
+    # Check constraints rigorously
+    assert np.all(weights >= 0.05 - 1e-5), f"Min weight violation: {weights.min()}"
+    assert np.all(weights <= 0.6 + 1e-5), f"Max weight violation: {weights.max()}"
+    assert abs(weights.sum() - 1.0) <= 0.01 + 1e-5, f"Sum violation: {weights.sum()}"
+    
+    # Check if optimization is better than naive equal weight
+    eq_w = np.full(4, 0.25)
+    from pyfolioanalytics.optimize import calculate_objective_measures
+    eq_meas = calculate_objective_measures(eq_w, res["moments"], port.objectives)
+    
+    # Usually random search with StdDev objective should find a portfolio with lower risk than equal weight
+    assert res["objective_measures"]["StdDev"] <= eq_meas["StdDev"] + 1e-4
     
     # Check objectives are computed
     assert "StdDev" in res["objective_measures"]

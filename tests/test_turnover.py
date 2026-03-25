@@ -43,6 +43,22 @@ def test_turnover_constraint():
     actual_turnover = np.sum(np.abs(w_to - w_init))
     assert actual_turnover <= turnover_target + 1e-6
     
+    # 3. Add proportional transaction costs (ptc) to the objective
+    ptc_rate = 0.05
+    p_tc = Portfolio(assets=asset_names)
+    p_tc.add_constraint("full_investment")
+    p_tc.add_constraint("long_only")
+    p_tc.add_constraint("transaction_cost", ptc=ptc_rate, weight_initial=w_init)
+    p_tc.add_objective("StdDev")
+    
+    res_tc = optimize_portfolio(R, p_tc)
+    w_tc = res_tc["weights"].values
+    
+    # Cost should pull weights closer to w_init compared to base
+    dist_tc = np.sum(np.abs(w_tc - w_init))
+    assert dist_tc < dist_base - 1e-4, f"TC penalty should reduce turnover, but {dist_tc} >= {dist_base}"
+    assert "transaction_cost" in res_tc["objective_measures"]
+    
     # Verify weights are different from base
     assert not np.allclose(w_to, w_base, atol=1e-4)
     
