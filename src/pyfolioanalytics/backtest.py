@@ -23,7 +23,7 @@ class BacktestResult:
         self.turnover = turnover if turnover is not None else pd.Series(0.0, index=returns.index)
         self.net_returns = net_returns if net_returns is not None else returns.copy()
 
-    def summary(self, risk_free_rate: float = 0.0) -> pd.DataFrame:
+    def summary(self, risk_free_rate: float = 0.0, benchmark_returns: Optional[pd.Series] = None) -> pd.DataFrame:
         """
         Calculate key performance and risk metrics (Tearsheet) for the backtest.
         Returns a DataFrame comparing Gross vs Net returns.
@@ -62,14 +62,81 @@ class BacktestResult:
             # Calmar Ratio
             calmar = cagr / abs(max_dd) if abs(max_dd) > 0 else np.nan
             
+            # Omega Ratio (threshold = 0)
+            returns_less_thresh = ret_series[ret_series < 0]
+            returns_above_thresh = ret_series[ret_series >= 0]
+            if len(returns_less_thresh) > 0 and returns_less_thresh.sum() != 0:
+                omega = returns_above_thresh.sum() / abs(returns_less_thresh.sum())
+            else:
+                omega = np.nan
+                
+            # Skewness & Kurtosis
+            skew = ret_series.skew()
+            kurt = ret_series.kurt()
+            
+            # Value at Risk / Expected Shortfall (historical 95%)
+            var_95 = -np.percentile(ret_series, 5) if len(ret_series) > 0 else np.nan
+            es_95 = -ret_series[ret_series <= -var_95].mean() if len(ret_series[ret_series <= -var_95]) > 0 else np.nan
+            
+            # Tail Ratio: 95th percentile / abs(5th percentile)
+            pct_95 = np.percentile(ret_series, 95)
+            tail_ratio = pct_95 / abs(var_95) if abs(var_95) > 0 else np.nan
+            
+            # Hit Ratios
+            positive_periods = (ret_series > 0).sum()
+            hit_ratio = positive_periods / n_days if n_days > 0 else np.nan
+
+            # Relative metrics if benchmark provided
+            info_ratio = np.nan
+            tracking_error = np.nan
+            up_capture = np.nan
+            down_capture = np.nan
+            
+            if benchmark_returns is not None:
+                # Align dates
+                aligned = pd.concat([ret_series, benchmark_returns], axis=1).dropna()
+                if len(aligned) > 0:
+                    ret_a = aligned.iloc[:, 0]
+                    bench_a = aligned.iloc[:, 1]
+                    
+                    active_ret = ret_a - bench_a
+                    tracking_error = active_ret.std() * np.sqrt(252)
+                    if tracking_error > 0:
+                        info_ratio = (active_ret.mean() * 252) / tracking_error
+                        
+                    # Capture Ratios
+                    up_market = bench_a > 0
+                    down_market = bench_a < 0
+                    
+                    if up_market.any():
+                        r_up = (1 + ret_a[up_market]).prod() ** (252 / up_market.sum()) - 1
+                        b_up = (1 + bench_a[up_market]).prod() ** (252 / up_market.sum()) - 1
+                        up_capture = r_up / b_up if b_up > 0 else np.nan
+                        
+                    if down_market.any():
+                        r_down = (1 + ret_a[down_market]).prod() ** (252 / down_market.sum()) - 1
+                        b_down = (1 + bench_a[down_market]).prod() ** (252 / down_market.sum()) - 1
+                        down_capture = r_down / b_down if b_down < 0 else np.nan
+
             metrics[ret_type] = {
                 "Total Return": cum_ret,
                 "CAGR": cagr,
                 "Annualized Volatility": ann_vol,
                 "Sharpe Ratio": sharpe,
                 "Sortino Ratio": sortino,
+                "Omega Ratio": omega,
                 "Max Drawdown": max_dd,
-                "Calmar Ratio": calmar
+                "Calmar Ratio": calmar,
+                "Tail Ratio": tail_ratio,
+                "Hit Ratio": hit_ratio,
+                "Skewness": skew,
+                "Kurtosis": kurt,
+                "Daily VaR (95%)": var_95,
+                "Daily CVaR (95%)": es_95,
+                "Tracking Error": tracking_error,
+                "Information Ratio": info_ratio,
+                "Up Capture Ratio": up_capture,
+                "Down Capture Ratio": down_capture
             }
             
         # Add turnover stat (same for gross/net)

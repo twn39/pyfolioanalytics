@@ -147,7 +147,6 @@ def plot_dendrogram(
     This visualizes the clustering process used in HRP/HERC.
     """
     import plotly.figure_factory as ff
-    from scipy.spatial.distance import pdist
     from scipy.cluster.hierarchy import linkage
     
     # 1. Calculate correlation and distance matrix
@@ -260,3 +259,32 @@ def plot_performance(
     fig.update_xaxes(title_text="Date", row=2, col=1)
     
     return fig
+
+def plot_underwater_drawdown(backtest_res, title="Underwater Drawdown", show=True):
+    import plotly.graph_objects as go
+    
+    returns = backtest_res.net_returns
+    cum_vals = (1 + returns).cumprod()
+    rolling_max = cum_vals.cummax()
+    drawdowns = (cum_vals / rolling_max) - 1.0
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=drawdowns.index, 
+        y=drawdowns, 
+        fill='tozeroy', 
+        name='Drawdown',
+        fillcolor='rgba(255, 0, 0, 0.3)',
+        line=dict(color='red')
+    ))
+    
+    fig.update_layout(
+        title=title,
+        yaxis_title="Drawdown",
+        yaxis_tickformat='.2%',
+        template="plotly_white"
+    )
+    if show:
+        fig.show()
+    return fig
+
