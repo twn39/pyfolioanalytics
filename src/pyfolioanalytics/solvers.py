@@ -420,13 +420,14 @@ def solve_nonlinear(
     }
 
 
-def solve_deoptim(
+def solve_global_heuristic(
     moments: dict[str, Any],
     constraints: dict[str, Any],
     objectives: list[dict[str, Any]],
+    method: str = "DEoptim",
     **kwargs,
 ) -> dict[str, Any]:
-    from scipy.optimize import LinearConstraint
+    from scipy.optimize import LinearConstraint, dual_annealing
 
     from .optimize import calculate_objective_measures
 
@@ -434,7 +435,7 @@ def solve_deoptim(
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
     R = kwargs.get("R")
 
-    def de_objective(w):
+    def objective_fn(w):
         measures = calculate_objective_measures(w, moments, objectives, R=R)
         total_score = 0.0
         for obj in objectives:
@@ -449,22 +450,45 @@ def solve_deoptim(
                     pct_rc = measures[rc_name]
                     if obj.get("min_concentration") or obj.get("min_difference"):
                         target = np.full(n, 1.0 / n)
-                        total_score += 1e2 * np.sum((pct_rc - target) ** 2)
+                        total_score += 1e4 * np.sum((pct_rc - target) ** 2)
+                        
+        # Hard penalties for algorithms that do not support linear constraints directly
+        sum_w = np.sum(w)
+        if sum_w < constraints["min_sum"] - 1e-4:
+            total_score += 1e5 * (constraints["min_sum"] - sum_w)
+        elif sum_w > constraints["max_sum"] + 1e-4:
+            total_score += 1e5 * (sum_w - constraints["max_sum"])
+            
         return total_score
 
-    lc = LinearConstraint(np.ones(n), constraints["min_sum"], constraints["max_sum"])
-    res = differential_evolution(
-        de_objective,
-        bounds,
-        constraints=(lc,),
-        maxiter=kwargs.get("itermax", 100),
-        popsize=15,
-        tol=1e-7,
-        polish=True,
-    )
+    max_iter = kwargs.get("itermax", 100)
+
+    if method == "GenSA":
+        # dual_annealing is Python's highly optimized Generalized Simulated Annealing
+        res = dual_annealing(objective_fn, bounds, maxiter=max_iter)
+    elif method in ["DEoptim", "PSO"]:
+        # We use differential_evolution as a stable and fast alternative/surrogate for PSO
+        lc = LinearConstraint(np.ones(n), constraints["min_sum"], constraints["max_sum"])
+        res = differential_evolution(
+            objective_fn,
+            bounds,
+            constraints=(lc,),
+            maxiter=max_iter,
+            popsize=15,
+            tol=1e-7,
+            polish=True,
+        )
+    else:
+        raise ValueError(f"Unknown heuristic method: {method}")
+
+    w_out = res.x
+    sum_w = np.sum(w_out)
+    if sum_w > 0 and abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-5:
+        w_out = (w_out / sum_w) * constraints["min_sum"]
+
     return {
-        "status": "optimal" if res.success else res.message,
-        "weights": res.x,
+        "status": "optimal" if res.success else "failed",
+        "weights": w_out,
         "obj_value": res.fun,
     }
 

@@ -16,7 +16,6 @@ from .risk import (
     EVaR,
     RLDaR,
     RLVaR,
-    UCI,
     VaR,
     average_drawdown,
     max_drawdown,
@@ -356,7 +355,12 @@ def optimize_portfolio(
             result = opt.solve()
 
     if result is None:
-        if optimize_method == "Kelly":
+        if optimize_method in ["DEoptim", "GenSA", "PSO"]:
+            from .solvers import solve_global_heuristic
+            result = solve_global_heuristic(
+                moments, constraints, portfolio.objectives, method=optimize_method, R=R.values if R is not None else None, **kwargs
+            )
+        elif optimize_method == "Kelly":
             result = solve_kelly(R.values, constraints, **kwargs)
         elif optimize_method == "MDIV":
             result = solve_mdiv(moments, constraints, **kwargs)

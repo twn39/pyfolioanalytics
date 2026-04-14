@@ -1,10 +1,61 @@
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
+from scipy.stats import chi2
 
 from .factors import ac_ranking, factor_model_covariance, statistical_factor_model
 
+def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd.DataFrame | np.ndarray:
+    """
+    Robust return cleaning (Winsorization) using the Boudt et al. (2008) method.
+    Identifies multivariate outliers using Mahalanobis distance based on MCD 
+    (Minimum Covariance Determinant) robust estimates and scales them back to 
+    the boundaries of the chi-squared distribution.
+    """
+    is_df = isinstance(R, pd.DataFrame)
+    R_vals = R.values if is_df else np.asarray(R)
+    T, N = R_vals.shape
+    
+    # 1. Robust Mean and Covariance estimation (MCD)
+    try:
+        from sklearn.covariance import MinCovDet
+        # Ensure sufficient observations for MCD, otherwise fallback to standard
+        if T > 2 * N:
+            mcd = MinCovDet(random_state=42).fit(R_vals)
+            mu_mcd = mcd.location_
+            cov_mcd = mcd.covariance_
+        else:
+            raise ValueError("Not enough observations for MCD")
+    except Exception as e:
+        warnings.warn(f"MCD fitting failed ({str(e)}), falling back to sample moments for Boudt cleaning.")
+        mu_mcd = np.mean(R_vals, axis=0)
+        cov_mcd = np.cov(R_vals, rowvar=False)
+        
+    # Calculate pseudo-inverse to handle ill-conditioned covariance
+    cov_inv = np.linalg.pinv(cov_mcd)
+    
+    # 2. Squared Mahalanobis Distance D^2
+    diff = R_vals - mu_mcd
+    # Vectorized computation of (R_t - mu)^T * Sigma^-1 * (R_t - mu)
+    D_sq = np.sum(np.dot(diff, cov_inv) * diff, axis=1)
+    
+    # 3. Chi-Square threshold (df = N assets)
+    threshold = chi2.ppf(1 - alpha, df=N)
+    
+    # 4. Outlier detection and scaling factor computation
+    scaling_factors = np.ones(T)
+    outliers = D_sq > threshold
+    if np.any(outliers):
+        scaling_factors[outliers] = np.sqrt(threshold / D_sq[outliers])
+    
+    # 5. Winsorization (scaling back outliers)
+    R_clean = mu_mcd + diff * scaling_factors[:, np.newaxis]
+    
+    if is_df:
+        return pd.DataFrame(R_clean, index=R.index, columns=R.columns)
+    return R_clean
 
 def M3_MM(R: np.ndarray) -> np.ndarray:
     T, N = R.shape
@@ -277,6 +328,12 @@ def set_portfolio_moments(
     moments = {}
     asset_names = list(portfolio.assets.keys())
     R_filtered = R[asset_names]
+    
+    # Handle Return Cleaning (e.g. Boudt robust winsorization)
+    clean_method = kwargs.get("clean_returns")
+    if clean_method == "boudt":
+        alpha = kwargs.get("clean_alpha", 0.05)
+        R_filtered = clean_returns_boudt(R_filtered, alpha=alpha)
 
     if method == "sample":
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
