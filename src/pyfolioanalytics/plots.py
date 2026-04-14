@@ -184,9 +184,13 @@ def plot_efficient_frontier(
     risk_col: str = "StdDev",
     return_col: str = "mean",
     title: str = "Efficient Frontier",
+    annualize_factor: int | float | None = None,
 ) -> go.Figure:
     """
     Plot the efficient frontier curve and optionally the underlying asset scatters.
+    If `annualize_factor` is provided (e.g., 252 for daily data), returns are multiplied 
+    by this factor, and risk measures are scaled appropriately (sqrt for volatility-based, 
+    linear for drawdowns).
     """
     fig = go.Figure()
 
@@ -197,25 +201,67 @@ def plot_efficient_frontier(
         raise ValueError(
             f"frontier_data must contain {risk_col} and {return_col} columns"
         )
+        
+    # Determine scaling factors
+    ret_scale = 1.0
+    risk_scale = 1.0
+    if annualize_factor is not None:
+        ret_scale = float(annualize_factor)
+        # Volatility/Variance based risks scale with sqrt(T), Drawdowns scale linearly, Variance scales with T
+        if risk_col in ["StdDev", "sd", "CVaR", "ES", "VaR", "EVaR", "RLVaR", "MAD", "semi_MAD"]:
+            risk_scale = np.sqrt(annualize_factor)
+        elif risk_col in ["var", "Variance"]:
+            risk_scale = float(annualize_factor)
+        else: # Drawdowns or unclassified
+            risk_scale = 1.0 # Standard practice: Drawdowns are not annualized, or scaled linearly? Usually unscaled or linear. We keep it 1.0 for DD to be safe, or user can pre-scale. Let's use 1.0 for DD.
+            if "DaR" in risk_col or "drawdown" in risk_col.lower():
+                risk_scale = 1.0
+            else:
+                risk_scale = np.sqrt(annualize_factor) # default to sqrt
+        
+        # Update axis titles to reflect annualization
+        x_title_ext = f" (Annualized x{annualize_factor})" if risk_scale != 1.0 else ""
+        y_title_ext = f" (Annualized x{annualize_factor})"
+    else:
+        x_title_ext = ""
+        y_title_ext = ""
+
+    # Calculate ratios for color mapping
+    risk_vals = frontier_data[risk_col].values * risk_scale
+    ret_vals = frontier_data[return_col].values * ret_scale
+    ratios = np.zeros_like(risk_vals)
+    for i in range(len(risk_vals)):
+        ratios[i] = ret_vals[i] / risk_vals[i] if risk_vals[i] > 1e-8 else 0.0
 
     # Plot Efficient Frontier
     fig.add_trace(
         go.Scatter(
-            x=frontier_data[risk_col],
-            y=frontier_data[return_col],
+            x=risk_vals,
+            y=ret_vals,
             mode="lines+markers",
             name="Efficient Frontier",
-            line=dict(shape="spline", smoothing=1.3, width=2),
-            marker=dict(size=6),
+            line=dict(shape="spline", smoothing=1.3, width=2, color="gray"),
+            marker=dict(
+                size=8, 
+                color=ratios, 
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Return/Risk Ratio"),
+                line=dict(width=0.5, color="DarkSlateGrey")
+            ),
+            hovertemplate=f"Return: %{{y:.4%}}<br>Risk ({risk_col}): %{{x:.4%}}<br>Ratio: %{{marker.color:.4f}}<extra></extra>"
         )
     )
 
     # Plot Individual Assets if moments are provided
     if moments is not None and "mu" in moments and "sigma" in moments:
-        mu = moments["mu"]
+        mu = moments["mu"].flatten() * ret_scale
         sigma = moments["sigma"]
+        
         # Determine std deviation (annualized or period depending on inputs, usually matches frontier)
-        asset_sd = np.sqrt(np.diag(sigma))
+        # Note: if risk_col is not StdDev, plotting assets on the same X-axis might be mathematically inconsistent 
+        # unless we compute the specific risk measure for each asset. For simplicity, we approximate with StdDev * scale
+        asset_sd = np.sqrt(np.diag(sigma)) * (np.sqrt(annualize_factor) if annualize_factor else 1.0)
         asset_returns = mu
 
         # We need asset names, which are not directly in moments usually,
@@ -231,19 +277,30 @@ def plot_efficient_frontier(
                 x=asset_sd,
                 y=asset_returns,
                 mode="markers",
-                name="Assets",
+                name="Assets (StdDev)",
                 text=asset_names,
-                marker=dict(size=8, symbol="diamond"),
+                hovertemplate="<b>%{text}</b><br>Return: %{y:.4%}<br>Risk: %{x:.4%}<extra></extra>",
+                marker=dict(size=10, symbol="diamond", color="#ff7f0e", line=dict(width=1, color="black")),
             )
         )
 
     fig.update_layout(
         title=title,
-        xaxis_title=f"Risk ({risk_col})",
-        yaxis_title=f"Return ({return_col})",
+        xaxis_title=f"Risk ({risk_col}){x_title_ext}",
+        yaxis_title=f"Return ({return_col}){y_title_ext}",
         xaxis_tickformat=".2%",
         yaxis_tickformat=".2%",
+        hovermode="closest",
         template="plotly_white",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1
+        )
     )
 
     return fig
@@ -690,15 +747,16 @@ def plot_return_histogram(
 
 
 def plot_performance(
-    returns: pd.Series, title: str = "Portfolio Performance"
+    returns: pd.Series, 
+    title: str = "Portfolio Performance",
 ) -> go.Figure:
     """
-    Plot cumulative returns curve and underwater drawdown plot.
+    Plot cumulative returns curve and compounded underwater drawdown plot.
     """
     # Calculate cumulative return
     cum_returns = (1 + returns).cumprod()
 
-    # Calculate rolling maximum and drawdown
+    # Calculate compounded drawdown
     rolling_max = cum_returns.cummax()
     drawdown = (cum_returns / rolling_max) - 1.0
 
@@ -708,7 +766,7 @@ def plot_performance(
         shared_xaxes=True,
         vertical_spacing=0.05,
         row_heights=[0.7, 0.3],
-        subplot_titles=("Cumulative Returns", "Drawdown"),
+        subplot_titles=("Cumulative Returns", "Compounded Drawdown"),
     )
 
     # Cumulative Returns trace
@@ -718,7 +776,7 @@ def plot_performance(
             y=cum_returns.values,
             mode="lines",
             name="Cumulative Return",
-            line=dict(width=2, color="blue"),
+            line=dict(width=2, color="#1f77b4"),  # Muted professional blue
         ),
         row=1,
         col=1,
@@ -731,51 +789,142 @@ def plot_performance(
             y=drawdown.values,
             mode="lines",
             fill="tozeroy",
-            name="Drawdown",
-            line=dict(width=1, color="red"),
-            fillcolor="rgba(255, 0, 0, 0.3)",
+            name="Compounded Drawdown",
+            line=dict(width=1, color="#ff7f0e"),  # Warm amber/orange
+            fillcolor="rgba(255, 127, 14, 0.25)",
         ),
         row=2,
         col=1,
     )
-
+    
     fig.update_layout(
-        title=title, height=700, hovermode="x unified", template="plotly_white"
+        title=title, height=700, hovermode="x unified", template="plotly_white",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1,
+            font=dict(size=10)
+        )
     )
 
-    fig.update_yaxes(title_text="Cumulative Return", row=1, col=1)
+    fig.update_yaxes(title_text="Cumulative Wealth", row=1, col=1)
     fig.update_yaxes(title_text="Drawdown", tickformat=".1%", row=2, col=1)
     fig.update_xaxes(title_text="Date", row=2, col=1)
 
     return fig
 
 
-def plot_underwater_drawdown(backtest_res, title="Underwater Drawdown", show=True):
-    import plotly.graph_objects as go
+def plot_underwater_drawdown(
+    returns: pd.Series, 
+    title: str = "Underwater Drawdown Analysis",
+    alpha: float = 0.05
+) -> go.Figure:
+    """
+    Plot a comprehensive two-pane underwater drawdown chart.
+    Top Pane: Historical Compounded Cumulative Returns.
+    Bottom Pane: Historical Uncompounded (Absolute) Drawdown overlaid with key risk metrics 
+    (Max Drawdown, CDaR, Average Drawdown, UCI).
+    """
+    from .risk import CDaR, UCI, average_drawdown, max_drawdown
+    
+    # 1. Calculate Compounded Cumulative Returns (Wealth)
+    cum_returns = (1 + returns).cumprod()
+    
+    # 2. Calculate Uncompounded Drawdown
+    uncomp_cum = returns.cumsum()
+    rolling_max_uncomp = np.maximum(0, uncomp_cum.cummax())
+    uncomp_drawdown = uncomp_cum - rolling_max_uncomp
 
-    returns = backtest_res.net_returns
-    cum_vals = (1 + returns).cumprod()
-    rolling_max = cum_vals.cummax()
-    drawdowns = (cum_vals / rolling_max) - 1.0
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Historical Compounded Cumulative Returns", "Historical Uncompounded Drawdown"),
+    )
 
-    fig = go.Figure()
+    # Top Pane: Cumulative Returns trace
     fig.add_trace(
         go.Scatter(
-            x=drawdowns.index,
-            y=drawdowns,
+            x=cum_returns.index,
+            y=cum_returns.values,
+            mode="lines",
+            name="Cumulative Return",
+            line=dict(width=1.5, color="#1f77b4"),  # Muted blue
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Bottom Pane: Uncompounded Drawdown trace
+    fig.add_trace(
+        go.Scatter(
+            x=uncomp_drawdown.index,
+            y=uncomp_drawdown.values,
+            mode="lines",
             fill="tozeroy",
-            name="Drawdown",
-            fillcolor="rgba(255, 0, 0, 0.3)",
-            line=dict(color="red"),
+            name="Uncompounded DD",
+            line=dict(width=1, color="#d62728"),  # Muted professional red
+            fillcolor="rgba(214, 39, 40, 0.25)",
+        ),
+        row=2,
+        col=1,
+    )
+    
+    # Bottom Pane: Overlay Metrics
+    w_dummy = np.array([1.0])
+    r_mat = returns.values.reshape(-1, 1)
+    
+    mdd = -max_drawdown(w_dummy, r_mat)
+    avg_dd = -average_drawdown(w_dummy, r_mat)
+    cdar = -CDaR(w_dummy, r_mat, p=1-alpha)
+    uci = -UCI(w_dummy, r_mat)
+    
+    metrics = [
+        ("Average Drawdown", avg_dd, "#2ca02c", "solid"), # Green
+        ("Ulcer Index", uci, "#9467bd", "dash"), # Purple
+        (f"CDaR ({(1-alpha):.0%})", cdar, "#e377c2", "solid"), # Pink
+        ("Maximum Drawdown", mdd, "#7f7f7f", "dashdot"), # Gray
+    ]
+    
+    metrics.sort(key=lambda x: x[1], reverse=True)
+    
+    for name, val, color, dash in metrics:
+        fig.add_trace(
+            go.Scatter(
+                x=[uncomp_drawdown.index[0], uncomp_drawdown.index[-1]],
+                y=[val, val],
+                mode="lines",
+                name=f"{name}: {val:.2%}",
+                line=dict(color=color, width=2, dash=dash),
+                hoverinfo="name"
+            ),
+            row=2,
+            col=1
+        )
+
+    fig.update_layout(
+        title=title, height=600, hovermode="x unified", template="plotly_white",
+        legend=dict(
+            yanchor="bottom",
+            y=0.01,  # Place legend at the absolute bottom right
+            xanchor="right",
+            x=0.99,
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1,
+            font=dict(size=10)
         )
     )
 
-    fig.update_layout(
-        title=title,
-        yaxis_title="Drawdown",
-        yaxis_tickformat=".2%",
-        template="plotly_white",
-    )
-    if show:
-        fig.show()
+    fig.update_yaxes(title_text="Cumulative Wealth", tickformat=".1%", row=1, col=1)
+    # The lower pane values can be very large negative numbers (e.g. -2.0)
+    # Plotly's .1% format will display -2.0 as -200.0%. This matches Riskfolio.
+    fig.update_yaxes(title_text="Drawdown", tickformat=".1%", row=2, col=1)
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+
     return fig
