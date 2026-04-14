@@ -287,6 +287,16 @@ def EDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     return _solve_evar_scalar(-calculate_drawdowns(p_returns), 1 - p)
 
 
+def UCI(weights: np.ndarray, R: np.ndarray, **kwargs) -> float:
+    """
+    Calculate the Ulcer Index (Root Mean Square Drawdown) of a portfolio
+    using uncompounded cumulative returns.
+    """
+    p_returns = R @ weights
+    drawdowns = calculate_drawdowns(p_returns)
+    return float(np.sqrt(np.mean(drawdowns ** 2)))
+
+
 def RLVaR(
     weights: np.ndarray, R: np.ndarray, p: float = 0.95, kappa: float = 0.3
 ) -> float:

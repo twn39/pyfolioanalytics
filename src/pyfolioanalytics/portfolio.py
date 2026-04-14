@@ -97,6 +97,7 @@ class Portfolio:
                 {
                     "target": kwargs.get("target", 0.05),
                     "benchmark": kwargs.get("benchmark"),
+                    "p_norm": kwargs.get("p_norm", 2),
                 }
             )
         elif type == "active_share":

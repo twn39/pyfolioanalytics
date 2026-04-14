@@ -194,7 +194,13 @@ def backtest_portfolio(
     """
     Simple walk-forward backtest with rebalancing, including weight drift,
     turnover calculation, and proportional transaction costs (PTC).
+    Also supports AUM-based fees (Management Fee and Performance Fee with High Water Mark).
     """
+    # AUM-based Fee parameters
+    initial_aum = kwargs.get("initial_aum", 1.0)
+    management_fee = kwargs.get("management_fee", 0.0)  # Annualized, e.g., 0.02 for 2%
+    performance_fee = kwargs.get("performance_fee", 0.0)  # E.g., 0.20 for 20%
+    
     # Handle rebalance_on from PortfolioAnalytics style
     rebalance_on = kwargs.get("rebalance_on")
     if rebalance_on:
@@ -230,6 +236,12 @@ def backtest_portfolio(
 
     current_weights = pd.Series(1.0 / len(R.columns), index=R.columns)
     last_eop_weights = pd.Series(0.0, index=R.columns)
+
+    # State variables for AUM-based fee calculation
+    nav = initial_aum
+    hwm = initial_aum
+    # Assuming 252 trading days per year for daily management fee accrual
+    daily_mgt_fee_rate = management_fee / 252.0
 
     for i in range(len(rebal_dates) - 1):
         start_date = rebal_dates[i]
@@ -281,8 +293,7 @@ def backtest_portfolio(
         # Sum of absolute changes between target current_weights and last end-of-period weights
         turnover_val = np.abs(current_weights - last_eop_weights).sum() / 2.0
 
-        # 2. Calculate Drift
-        # eop_weights(t) = bop_weights(t) * (1 + R(t)) / (1 + R_port(t))
+        # 2. Calculate Drift and Exact NAV trajectory
         bop_weights_matrix = np.zeros(R_period.shape)
         eop_weights_matrix = np.zeros(R_period.shape)
         port_ret_array = np.zeros(len(R_period))
@@ -291,6 +302,9 @@ def backtest_portfolio(
 
         # First day of the period pays the turnover cost
         turnover_array[0] = turnover_val
+        
+        # Deduct PTC from NAV immediately on rebalance
+        nav *= (1.0 - turnover_val * ptc)
 
         w = current_weights.values
         R_vals = R_period.values
@@ -299,15 +313,29 @@ def backtest_portfolio(
             # Beginning of period weights
             bop_weights_matrix[t, :] = w
 
-            # Portfolio return for the day
+            # Portfolio Gross Return for the day
             r_p = np.dot(w, R_vals[t])
             port_ret_array[t] = r_p
-
-            # Net return
-            if t == 0:
-                net_ret_array[t] = r_p - turnover_val * ptc
-            else:
-                net_ret_array[t] = r_p
+            
+            nav_prev = nav
+            # 1. Market Movement
+            nav *= (1.0 + r_p)
+            
+            # 2. Accrue Daily Management Fee
+            if management_fee > 0:
+                nav *= (1.0 - daily_mgt_fee_rate)
+            
+            # 3. Performance Fee (assessed at the end of each rebalance period)
+            # In standard industry practice, performance fee is crystalized monthly/quarterly (at rebalance)
+            if performance_fee > 0 and t == len(R_period) - 1:
+                if nav > hwm:
+                    perf_fee_amount = (nav - hwm) * performance_fee
+                    nav -= perf_fee_amount
+                    hwm = nav  # Update high water mark
+            
+            # Exact Net Return inferred from NAV change
+            # Note: For the very first day of backtest, this incorporates the initial turnover PTC
+            net_ret_array[t] = (nav / nav_prev) - 1.0
 
             # End of period weights (drift)
             # w_{t+1} = w_t * (1 + R_t) / (1 + R_p)

@@ -39,33 +39,34 @@ class ConvexOptimizer:
     def add_constraint(self, constraint):
         self.cp_constraints.append(constraint)
 
-    def _build_base_constraints(self):
+    def _build_base_constraints(self, kappa: Any = 1.0):
         c = self.constraints
-        w = self.w
+        w = self.w  # w acts as y in ratio case
 
         # 1. Sum constraints
         if abs(c["min_sum"] - c["max_sum"]) < 1e-10:
-            self.add_constraint(cp.sum(w) == c["min_sum"])
+            self.add_constraint(cp.sum(w) == c["min_sum"] * kappa)
         else:
-            self.add_constraint(cp.sum(w) >= c["min_sum"])
-            self.add_constraint(cp.sum(w) <= c["max_sum"])
+            self.add_constraint(cp.sum(w) >= c["min_sum"] * kappa)
+            self.add_constraint(cp.sum(w) <= c["max_sum"] * kappa)
 
         # 2. Box constraints
-        self.add_constraint(w >= c["min"].values)
-        self.add_constraint(w <= c["max"].values)
+        self.add_constraint(w >= c["min"].values * kappa)
+        self.add_constraint(w <= c["max"].values * kappa)
 
         # 3. Factor Exposure
         if c.get("B") is not None:
-            self.add_constraint(c["B"].T @ w >= c["lower"])
-            self.add_constraint(c["B"].T @ w <= c["upper"])
+            self.add_constraint(c["B"].T @ w >= c["lower"] * kappa)
+            self.add_constraint(c["B"].T @ w <= c["upper"] * kappa)
 
         # 4. Leverage
         if c.get("leverage") is not None:
-            self.add_constraint(cp.norm(w, 1) <= c["leverage"])
+            self.add_constraint(cp.norm(w, 1) <= c["leverage"] * kappa)
 
         # 5. Diversification
         if c.get("div_target") is not None:
-            self.add_constraint(cp.sum_squares(w) <= 1.0 - c["div_target"])
+            div_val = np.sqrt(max(0.0, 1.0 - c["div_target"]))
+            self.add_constraint(cp.norm(w, 2) <= div_val * kappa)
 
         # 6.5 Group Constraints
         if c.get("groups") is not None:
@@ -79,22 +80,22 @@ class ConvexOptimizer:
                     for item in group
                 ]
                 if group_min is not None:
-                    self.add_constraint(cp.sum(w[indices]) >= group_min[i])
+                    self.add_constraint(cp.sum(w[indices]) >= group_min[i] * kappa)
                 if group_max is not None:
-                    self.add_constraint(cp.sum(w[indices]) <= group_max[i])
+                    self.add_constraint(cp.sum(w[indices]) <= group_max[i] * kappa)
 
         # 6. Linear Constraints
         if "linear_A" in c and "linear_b" in c:
             for A, b in zip(c["linear_A"], c["linear_b"]):
-                self.add_constraint(A @ w <= b)
+                self.add_constraint(A @ w <= b * kappa)
         if "linear_A_eq" in c and "linear_b_eq" in c:
             for A_eq, b_eq in zip(c["linear_A_eq"], c["linear_b_eq"]):
-                self.add_constraint(A_eq @ w == b_eq)
+                self.add_constraint(A_eq @ w == b_eq * kappa)
 
         # 7. Position Limits (requires MIQP)
         if c.get("max_pos") is not None:
             z = cp.Variable(self.n, boolean=True)
-            W_max = np.maximum(1.0, c["max"].values)
+            W_max = np.maximum(1.0, c["max"].values) * 1000.0 if isinstance(kappa, cp.Variable) else np.maximum(1.0, c["max"].values)
             self.add_constraint(w <= cp.multiply(z, W_max))
             self.add_constraint(cp.sum(z) <= c["max_pos"])
 
@@ -102,27 +103,40 @@ class ConvexOptimizer:
         te_target = c.get("target")
         te_benchmark = c.get("benchmark")
         if te_target is not None and te_benchmark is not None:
+            p_norm = c.get("p_norm", 2)
             w_b = self._get_benchmark_weights(te_benchmark)
-            diff = w - w_b
-            sigma = self.moments["sigma"]
-            self.add_constraint(cp.quad_form(diff, sigma) <= te_target**2)
+            diff = w - kappa * w_b
+            
+            if p_norm == 2:
+                # Traditional L2 Tracking Error scaled by covariance
+                sigma = self.moments["sigma"]
+                G = np.linalg.cholesky(sigma + 1e-8 * np.eye(self.n)).T
+                self.add_constraint(cp.norm(G @ diff, 2) <= te_target * kappa)
+            elif p_norm == 1:
+                # L1 Tracking Error (Active Share like constraint)
+                self.add_constraint(cp.norm(diff, 1) <= te_target * kappa)
+            elif p_norm == "inf" or p_norm == np.inf:
+                # L-infinity Tracking Error (Maximum single-asset deviation)
+                self.add_constraint(cp.norm(diff, "inf") <= te_target * kappa)
+            else:
+                raise ValueError(f"Unsupported p_norm {p_norm} for tracking_error constraint.")
 
         as_target = c.get("active_share_target")
         as_benchmark = c.get("active_share_benchmark")
         if as_target is not None and as_benchmark is not None:
             w_b = self._get_benchmark_weights(as_benchmark)
-            self.add_constraint(0.5 * cp.norm(w - w_b, 1) <= as_target)
+            self.add_constraint(0.5 * cp.norm(w - kappa * w_b, 1) <= as_target * kappa)
 
         # 9. Turnover and Transaction Costs
         w_init = c.get("weight_initial")
         if w_init is not None:
             turnover_target = c.get("turnover_target")
             if turnover_target is not None:
-                self.add_constraint(cp.sum(cp.abs(w - w_init)) <= turnover_target)
+                self.add_constraint(cp.sum(cp.abs(w - kappa * w_init)) <= turnover_target * kappa)
 
             ptc = c.get("ptc")
             if ptc is not None:
-                tc_penalty = cp.sum(cp.multiply(cp.abs(w - w_init), ptc))
+                tc_penalty = cp.sum(cp.multiply(cp.abs(w - kappa * w_init), ptc))
                 self.objective_terms.append(tc_penalty)
 
         # 10. Robust Return Preparation
@@ -139,7 +153,7 @@ class ConvexOptimizer:
 
         min_return = c.get("min_return")
         if min_return is not None:
-            self.add_constraint(w @ self.mu_robust - self.ret_uncertainty >= min_return)
+            self.add_constraint(w @ self.mu_robust - self.ret_uncertainty >= min_return * kappa)
 
     def _get_benchmark_weights(self, benchmark) -> np.ndarray:
         if isinstance(benchmark, pd.Series):
@@ -150,8 +164,6 @@ class ConvexOptimizer:
         return benchmark
 
     def solve(self) -> dict[str, Any]:
-        self._build_base_constraints()
-
         return_obj = None
         risk_obj = None
 
@@ -162,6 +174,19 @@ class ConvexOptimizer:
                 return_obj = obj
             elif obj["type"] in ["risk", "portfolio_risk_objective"]:
                 risk_obj = obj
+
+        # Check if we should do Ratio Optimization
+        is_ratio_opt = False
+        if return_obj and risk_obj:
+            ret_target = return_obj.get("target")
+            risk_target = risk_obj.get("target")
+            if ret_target is None and risk_target is None:
+                is_ratio_opt = self.kwargs.get("max_ratio", True)
+
+        if is_ratio_opt:
+            return self._solve_ratio(return_obj, risk_obj)
+
+        self._build_base_constraints()
 
         # Process Risk Objective Term
         risk_term = 0.0
@@ -230,6 +255,57 @@ class ConvexOptimizer:
                 return {"status": "failed", "weights": None, "message": str(e)}
 
         return {"status": prob.status, "weights": self.w.value, "obj_value": prob.value}
+
+    def _solve_ratio(self, return_obj: dict[str, Any], risk_obj: dict[str, Any]) -> dict[str, Any]:
+        """
+        Solve Ratio Optimization (e.g., Sharpe, STARR) using Charnes-Cooper transformation.
+        """
+        kappa = cp.Variable(nonneg=True)
+        # w is now acting as y = kappa * w_real
+        self._build_base_constraints(kappa=kappa)
+
+        risk_name = risk_obj.get("name", "StdDev")
+        strategy_cls = RISK_STRATEGIES.get(risk_name)
+        if not strategy_cls:
+            raise ValueError(f"Unsupported convex risk measure: {risk_name}")
+        strategy = strategy_cls()
+        
+        # In ratio optimization, strategy.build(self) receives w acting as y.
+        # Since most coherent risk measures are positive homogeneous, Risk(y) = kappa * Risk(w).
+        risk_term_y = strategy.build(self, risk_obj.get("arguments", {}))
+        
+        # Enforce scaled risk <= 1
+        self.add_constraint(risk_term_y <= 1.0)
+
+        # Maximize scaled return: y^T * mu - kappa * R_f
+        rf = 0.0
+        if "arguments" in return_obj and "risk_free_rate" in return_obj["arguments"]:
+            rf = return_obj["arguments"]["risk_free_rate"]
+        elif "risk_free_rate" in self.kwargs:
+            rf = self.kwargs["risk_free_rate"]
+
+        obj_expr = -(self.w @ self.mu_robust - self.ret_uncertainty - kappa * rf)
+        
+        # Add turnover/ptc penalties scaled appropriately if they were added to objective_terms
+        prob = cp.Problem(cp.Minimize(obj_expr + sum(self.objective_terms)), self.cp_constraints)
+
+        try:
+            if prob.is_dcp():
+                prob.solve(verbose=False)
+            if prob.status not in ["optimal", "optimal_inaccurate"]:
+                prob.solve(solver=cp.SCS, verbose=False)
+        except Exception:
+            try:
+                prob.solve(solver=cp.SCS, verbose=False)
+            except Exception as e:
+                return {"status": "failed", "weights": None, "message": str(e)}
+
+        if prob.status in ["optimal", "optimal_inaccurate"] and kappa.value is not None and kappa.value > 1e-8:
+            real_weights = self.w.value / kappa.value
+        else:
+            real_weights = self.w.value if self.w.value is not None else np.zeros(self.n)
+
+        return {"status": prob.status, "weights": real_weights, "obj_value": prob.value}
 
 
 class RiskModelStrategy(ABC):
@@ -502,6 +578,27 @@ class CVaRStrategy(RiskModelStrategy):
         return t + cp.sum(u) / (T * alpha)
 
 
+class UlcerIndexStrategy(RiskModelStrategy):
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
+            raise ValueError("Ulcer Index (UCI) requires historical returns R.")
+        T = optimizer.T
+
+        u = cp.Variable(T + 1)
+        cum_ret = cp.Variable(T + 1)
+        d = cp.Variable(T)
+
+        optimizer.add_constraint(cum_ret[0] == 0)
+        optimizer.add_constraint(u[0] == 0)
+        for i in range(T):
+            optimizer.add_constraint(cum_ret[i + 1] == cum_ret[i] + optimizer.R[i] @ optimizer.w)
+            optimizer.add_constraint(u[i + 1] >= cum_ret[i + 1])
+            optimizer.add_constraint(u[i + 1] >= u[i])
+            optimizer.add_constraint(d[i] == u[i + 1] - cum_ret[i + 1])
+
+        return cp.norm(d, 2) / np.sqrt(T)
+
+RISK_STRATEGIES["UCI"] = UlcerIndexStrategy
 RISK_STRATEGIES["RLVaR"] = RLVaRStrategy
 RISK_STRATEGIES["RLDaR"] = RLDaRStrategy
 RISK_STRATEGIES["CVaR"] = CVaRStrategy

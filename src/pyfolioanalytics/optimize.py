@@ -16,6 +16,7 @@ from .risk import (
     EVaR,
     RLDaR,
     RLVaR,
+    UCI,
     VaR,
     average_drawdown,
     max_drawdown,

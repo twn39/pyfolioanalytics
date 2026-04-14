@@ -14,9 +14,9 @@
 复刻了 R 语言 `portfolio.spec` 的核心逻辑，支持高度灵活的约束组合：
 -   **资产分配约束**: `box` (权重上下限), `group` (组约束), `position_limit` (最大持仓数)。
 -   **预算与杠杆**: `full_investment` (权重和为1), `dollar_neutral` (多空对冲), `leverage_exposure` (毛杠杆限制，支持 130/30)。
--   **因子与风险**: 
+-   **风控偏离限制**: 
     -   `factor_exposure`: 限制风格/宏观因子的 Beta 暴露。
-    -   `tracking_error`: 限制相对于基准的跟踪误差。
+    -   `tracking_error`: 强大的多范数跟踪误差。支持 $L_2$ (经典波动偏离), $L_1$ (主动偏离度), 以及极致严格的 $L_\infty$ (单一个股绝对最大偏离) 风控。
     -   `active_share`: 强制组合与基准的主动管理差异。
     -   `diversification (HHI)`: 通过权重平方和限制实现多样化。
 -   **交易控制**: `turnover` (换手率限制), `transaction_cost` (基于百分比的交易成本)。
@@ -32,25 +32,29 @@
 ### 3. 风险度量与归因 (Risk Analysis)
 涵盖从经典波动率到前沿稳健度量的全方位分析：
 -   **经典与修正风险**: Gaussian/Modified (Cornish-Fisher) VaR 和 ES (CVaR)。
--   **回撤风险**: `CDaR` (条件回撤), `EDaR` (熵回撤), `MaxDrawdown`。
+-   **回撤风险**: `CDaR` (条件回撤), `EDaR` (熵回撤), `MaxDrawdown`，以及惩罚持续深度的 **`Ulcer Index (溃疡指数)`**。
 -   **现代稳健度量**: `EVaR` (熵 VaR), `RLVaR/RLDaR` (基于稳健线性规划的 VaR/DaR)。
 -   **排序加权 (OWA)**: 支持 GMD、L-Moments 权重、CRM 权重等 OWA 风险度量。
 -   **风险归因**: 资产级与因子级的 **MCR** (边际), **CCR** (成分), **PCR** (百分比) 贡献分解。
 
 ### 4. 优化算法与引擎 (Optimization)
 集成多种求解器，适配线性、二次及非凸优化：
--   **凸优化集成**: 基于 **CVXPY** 的 MVO, SOCP, MILP 求解。
+-   **凸优化集成 (CVXPY)**: 
+    -   MVO, SOCP, MILP 极速求解。
+    -   **比率全局优化 (Ratio Optimization)**: 内置 **Charnes-Cooper 变换**，使得各种风险比率（如 Sharpe Ratio, STARR, Martin Ratio）能转化为凸规划被直接秒解出全局最优点。
 -   **风险平价**: `ERC` (等风险贡献) 的非线性精确求解。
 -   **有效前沿**: **CLA** (关键线算法) 实现带约束的精确前沿描绘。
 -   **机器学习优化**: 
     -   `HRP` (分层风险平价), `HERC` (分层等风险贡献), `NCO` (嵌套聚类优化)。
     -   支持 **DBHT** (有向气泡层次树) 聚类算法。
--   **离散化分配**: 支持将百分比权重转换为实际股票股数的离散分配算法。
+-   **非凸与启发式搜索**: 支持 `rp_sample` (网格随机采样), `rp_grid`, 以及基于 Simplex 变换的随机生成，用于复杂非凸空间的完全覆盖搜索。
 
 ### 5. 架构与实务功能
--   **回测引擎**: 支持滚动窗口（Rolling）和扩张窗口（Expanding）的自动化调仓测试。
+-   **对冲基金级回测引擎**: 
+    -   支持滚动窗口（Rolling）和扩张窗口（Expanding）的自动化调仓测试。
+    -   支持**精细化费用建模**，可在考虑 PTC 的同时，基于精确的绝对资产规模 (AUM) 轨迹逐日计提**管理费 (Management Fee)** 并支持带有**高水位线 (High Water Mark)** 的**表现费 (Performance Fee)** 计算。
 -   **层次化结构**: 支持 **Regime Switching** (状态切换) 组合和多层级嵌套组合。
--   **随机组合**: 支持基于 Simplex 变换的随机组合生成，用于非凸空间探索。
+-   **离散化分配**: 支持将百分比权重转换为实际股票股数。
 
 ---
 
