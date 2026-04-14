@@ -163,6 +163,48 @@ class ConvexOptimizer:
             return np.array([benchmark.get(name, 0.0) for name in asset_names])
         return benchmark
 
+    def _execute_solve(self, prob: cp.Problem) -> None:
+        """
+        Robust solver cascade. Attempts to use user-specified solver via kwargs first.
+        If unspecified or if it fails, falls back through a sequence of modern, stable solvers.
+        """
+        if not prob.is_dcp() and not prob.is_dqcp():
+            raise ValueError("Problem does not follow Disciplined Convex Programming (DCP) rules.")
+            
+        solver = self.kwargs.get("solver")
+        solver_kwargs = self.kwargs.get("solver_kwargs", {"verbose": False})
+        # Default fallback solvers order: CLARABEL (modern interior point, highly stable), ECOS, SCS (good for exponential cones but lower precision)
+        fallback_solvers = [cp.CLARABEL, cp.ECOS, cp.SCS]
+        
+        # 1. If user explicitly specified a solver
+        if solver is not None:
+            if isinstance(solver, str):
+                solver = getattr(cp, solver.upper(), solver)
+            try:
+                prob.solve(solver=solver, **solver_kwargs)
+                if prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                    return
+            except Exception as e:
+                import warnings
+                warnings.warn(f"User-specified solver {solver} failed ({str(e)}), attempting fallback solvers.")
+                
+        # 2. Cascade through fallback solvers
+        for fb_solver in fallback_solvers:
+            if fb_solver in cp.installed_solvers():
+                try:
+                    # SCS requires slightly different kwargs for tolerance sometimes, but standard cvxpy kwargs should pass
+                    prob.solve(solver=fb_solver, **solver_kwargs)
+                    if prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
+                        return
+                except Exception:
+                    continue
+                    
+        # 3. Ultimate fallback to default CVXPY solve
+        try:
+            prob.solve(**solver_kwargs)
+        except Exception:
+            pass
+
     def solve(self) -> dict[str, Any]:
         return_obj = None
         risk_obj = None
@@ -241,18 +283,11 @@ class ConvexOptimizer:
             self.objective_terms.append(cp.quad_form(self.w, self.moments["sigma"]))
 
         prob = cp.Problem(cp.Minimize(sum(self.objective_terms)), self.cp_constraints)
-
+        
         try:
-            # SCS is better for exponential cones (EVaR, EDaR)
-            if prob.is_dcp():
-                prob.solve(verbose=False)
-            if prob.status not in ["optimal", "optimal_inaccurate"]:
-                prob.solve(solver=cp.SCS, verbose=False)
-        except Exception:
-            try:
-                prob.solve(solver=cp.SCS, verbose=False)
-            except Exception as e:
-                return {"status": "failed", "weights": None, "message": str(e)}
+            self._execute_solve(prob)
+        except Exception as e:
+            return {"status": "failed", "weights": None, "message": str(e)}
 
         return {"status": prob.status, "weights": self.w.value, "obj_value": prob.value}
 
@@ -290,15 +325,9 @@ class ConvexOptimizer:
         prob = cp.Problem(cp.Minimize(obj_expr + sum(self.objective_terms)), self.cp_constraints)
 
         try:
-            if prob.is_dcp():
-                prob.solve(verbose=False)
-            if prob.status not in ["optimal", "optimal_inaccurate"]:
-                prob.solve(solver=cp.SCS, verbose=False)
-        except Exception:
-            try:
-                prob.solve(solver=cp.SCS, verbose=False)
-            except Exception as e:
-                return {"status": "failed", "weights": None, "message": str(e)}
+            self._execute_solve(prob)
+        except Exception as e:
+            return {"status": "failed", "weights": None, "message": str(e)}
 
         if prob.status in ["optimal", "optimal_inaccurate"] and kappa.value is not None and kappa.value > 1e-8:
             real_weights = self.w.value / kappa.value

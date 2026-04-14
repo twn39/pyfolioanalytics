@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.solvers import solve_deoptim
+from pyfolioanalytics.solvers import solve_global_heuristic
 
 
 def test_solve_deoptim_smoke():
@@ -23,7 +23,7 @@ def test_solve_deoptim_smoke():
 
     moments = set_portfolio_moments(R, port)
 
-    res = solve_deoptim(
+    res = solve_global_heuristic(
         moments, port.get_constraints(), port.objectives, R=R.values, itermax=5
     )
     assert res["status"] in [

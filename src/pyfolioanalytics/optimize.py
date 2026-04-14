@@ -159,9 +159,25 @@ def calculate_objective_measures(
     return measures
 
 
+def _check_returns(R: pd.DataFrame | np.ndarray | None):
+    if R is None:
+        return
+    if isinstance(R, pd.DataFrame):
+        vals = R.values
+    else:
+        vals = R
+    
+    if np.isnan(vals).any():
+        raise ValueError("Historical returns 'R' contain NaN values. Please clean or impute missing data before optimization.")
+    if np.isinf(vals).any():
+        raise ValueError("Historical returns 'R' contain infinite values.")
+
+
 def optimize_portfolio(
     R: pd.DataFrame, portfolio: Portfolio | Any, optimize_method: str = "ROI", **kwargs
 ) -> dict[str, Any]:
+    _check_returns(R)
+    
     # 1. Dispatch Multi-Layer
     if (
         hasattr(portfolio, "sub_portfolios")

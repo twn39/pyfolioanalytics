@@ -37,6 +37,147 @@ def plot_weights(
     return fig
 
 
+def plot_random_portfolios(
+    random_weights: np.ndarray | pd.DataFrame,
+    moments: dict[str, Any],
+    objectives: list[dict[str, Any]],
+    R: pd.DataFrame | np.ndarray | None = None,
+    risk_col: str = "StdDev",
+    return_col: str = "mean",
+    optimal_weights: pd.Series | np.ndarray | None = None,
+    title: str = "Random Portfolios Feasible Space",
+) -> go.Figure:
+    """
+    Plot a scatter cloud of random portfolios to visualize the feasible risk-return space.
+    Optionally overlays the optimal portfolio as a highlighted star.
+    """
+    from .optimize import calculate_objective_measures
+
+    # Ensure random_weights is a 2D numpy array
+    if isinstance(random_weights, pd.DataFrame):
+        w_mat = random_weights.values
+    else:
+        w_mat = random_weights
+
+    n_ports = w_mat.shape[0]
+    returns_arr = np.zeros(n_ports)
+    risks_arr = np.zeros(n_ports)
+    ratios_arr = np.zeros(n_ports)
+    hover_texts = []
+
+    # Prepare historical returns R for calculating complex risk measures if needed
+    R_vals = R.values if isinstance(R, pd.DataFrame) else R
+
+    # Pre-extract asset names for hover text if available
+    asset_names = None
+    if isinstance(random_weights, pd.DataFrame):
+        asset_names = random_weights.columns.tolist()
+    elif isinstance(R, pd.DataFrame):
+        asset_names = R.columns.tolist()
+
+    for i in range(n_ports):
+        w = w_mat[i]
+        measures = calculate_objective_measures(w, moments, objectives, R=R_vals)
+        
+        # Default fallbacks if the measure wasn't calculated (e.g., objective disabled)
+        ret = measures.get(return_col, np.dot(w, moments["mu"]).item())
+        if risk_col in measures:
+            risk = measures[risk_col]
+        else:
+            # Fallback to standard deviation if specific risk wasn't calculated
+            risk = np.sqrt(max(0.0, np.dot(w.T, np.dot(moments["sigma"], w))))
+            
+        returns_arr[i] = ret
+        risks_arr[i] = risk
+        ratio = ret / risk if risk > 1e-8 else 0.0
+        ratios_arr[i] = ratio
+
+        # Construct hover text
+        hover = f"Return: {ret:.4%}<br>Risk ({risk_col}): {risk:.4%}<br>Ratio: {ratio:.4f}"
+        if asset_names is not None:
+            # Find top 3 allocations
+            top_indices = np.argsort(w)[-3:][::-1]
+            top_allocs = "<br>".join([f"{asset_names[idx]}: {w[idx]:.1%}" for idx in top_indices if w[idx] > 0.01])
+            if top_allocs:
+                hover += f"<br><br>Top Allocations:<br>{top_allocs}"
+        hover_texts.append(hover)
+
+    fig = go.Figure()
+
+    # Use Scattergl for high performance rendering of thousands of points
+    fig.add_trace(
+        go.Scattergl(
+            x=risks_arr,
+            y=returns_arr,
+            mode="markers",
+            name="Random Portfolios",
+            text=hover_texts,
+            hoverinfo="text",
+            marker=dict(
+                size=5,
+                color=ratios_arr,
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Return/Risk Ratio"),
+                opacity=0.6,
+                line=dict(width=0.5, color="white")
+            ),
+        )
+    )
+
+    # Overlay optimal portfolio if provided
+    if optimal_weights is not None:
+        if isinstance(optimal_weights, pd.Series):
+            w_opt = optimal_weights.values
+        else:
+            w_opt = optimal_weights
+            
+        opt_measures = calculate_objective_measures(w_opt, moments, objectives, R=R_vals)
+        opt_ret = opt_measures.get(return_col, np.dot(w_opt, moments["mu"]).item())
+        
+        if risk_col in opt_measures:
+            opt_risk = opt_measures[risk_col]
+        else:
+            opt_risk = np.sqrt(max(0.0, np.dot(w_opt.T, np.dot(moments["sigma"], w_opt))))
+
+        fig.add_trace(
+            go.Scatter(
+                x=[opt_risk],
+                y=[opt_ret],
+                mode="markers",
+                name="Optimal Portfolio",
+                hoverinfo="x+y+name",
+                marker=dict(
+                    symbol="star",
+                    size=16,
+                    color="gold",
+                    line=dict(width=2, color="DarkSlateGrey")
+                )
+            )
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=f"Risk ({risk_col})",
+        yaxis_title=f"Return ({return_col})",
+        xaxis_tickformat=".2%",
+        yaxis_tickformat=".2%",
+        hovermode="closest",
+        template="plotly_white",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1
+        )
+    )
+
+    return fig
+
+
 def plot_efficient_frontier(
     frontier_data: pd.DataFrame,
     moments: dict[str, Any] | None = None,
@@ -109,32 +250,167 @@ def plot_efficient_frontier(
 
 
 def plot_risk_decomposition(
-    ccr: pd.Series, title: str = "Component Contribution to Risk"
+    ccr: pd.Series, 
+    title: str = "Component Contribution to Risk",
+    percentage: bool = True,
+    erc_line: bool = False,
+    custom_budget: pd.Series | dict | None = None,
 ) -> go.Figure:
     """
-    Plot a bar chart showing the Component Contribution to Risk (CCR) of each asset.
+    Plot a horizontal bar chart showing the Component Contribution to Risk of each asset.
+    Supports converting to Percentage Contribution to Risk (PCR) and overlaying reference lines.
     """
     fig = go.Figure()
 
+    total_risk = ccr.sum()
+    if percentage and total_risk > 0:
+        data_to_plot = ccr / total_risk
+        x_title = "Percentage Contribution to Risk (PCR)"
+        hover_template = "%{y}: %{x:.2%}<extra></extra>"
+    else:
+        data_to_plot = ccr
+        x_title = "Absolute Contribution to Risk (CCR)"
+        hover_template = "%{y}: %{x:.4f}<extra></extra>"
+
     # Sort for better visualization
-    ccr_sorted = ccr.sort_values(ascending=True)
+    data_sorted = data_to_plot.sort_values(ascending=True)
 
     fig.add_trace(
         go.Bar(
-            x=ccr_sorted.values,
-            y=ccr_sorted.index,
+            x=data_sorted.values,
+            y=data_sorted.index,
             orientation="h",
-            marker=dict(color=ccr_sorted.values, colorscale="Viridis", showscale=False),
+            hovertemplate=hover_template,
+            marker=dict(
+                color=data_sorted.values,
+                colorscale="Viridis",
+                showscale=False,
+            ),
+            name="Risk Contribution"
         )
     )
 
+    # Add Equal Risk Contribution (ERC) vertical line
+    if percentage and erc_line:
+        n_assets = len(ccr)
+        if n_assets > 0:
+            target = 1.0 / n_assets
+            fig.add_vline(
+                x=target,
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"ERC ({target:.1%})",
+                annotation_position="top right",
+                opacity=0.8
+            )
+            
+    # Add custom budget markers if provided
+    if custom_budget is not None and percentage:
+        if isinstance(custom_budget, dict):
+            budget_series = pd.Series(custom_budget)
+        else:
+            budget_series = custom_budget
+            
+        # Reindex to match sorted data order
+        budget_sorted = budget_series.reindex(data_sorted.index).fillna(0)
+        fig.add_trace(
+            go.Scatter(
+                x=budget_sorted.values,
+                y=budget_sorted.index,
+                mode="markers",
+                name="Target Budget",
+                marker=dict(symbol="line-ns-open", size=12, color="red", line=dict(width=2))
+            )
+        )
+
     fig.update_layout(
         title=title,
-        xaxis_title="Risk Contribution",
+        xaxis_title=x_title,
         yaxis_title="Asset",
-        xaxis_tickformat=".2%",
+        xaxis_tickformat=".1%" if percentage else ".4f",
         template="plotly_white",
+        showlegend=False if custom_budget is None else True
     )
+
+    return fig
+
+
+def plot_factor_risk_decomposition(
+    factor_decomp_result: dict[str, Any],
+    factor_names: list[str] | None = None,
+    percentage: bool = True,
+    title: str = "Factor Risk Decomposition (Attribution)",
+) -> go.Figure:
+    """
+    Plot the systematic (factor) and idiosyncratic risk contributions of a portfolio.
+    Requires the output dictionary from `risk.factor_risk_decomposition`.
+    """
+    fig = go.Figure()
+
+    total_risk = factor_decomp_result.get("total", 0.0)
+    
+    if percentage and total_risk > 0:
+        factor_contrib = factor_decomp_result["pcr_factor"]
+        resid_contrib = factor_decomp_result["pcr_residual"]
+        x_title = "Percentage Contribution to Risk (PCR)"
+        hover_template = "%{y}: %{x:.2%}<extra></extra>"
+    else:
+        factor_contrib = factor_decomp_result["ccr_factor"]
+        resid_contrib = factor_decomp_result["ccr_residual"]
+        x_title = "Absolute Contribution to Risk (CCR)"
+        hover_template = "%{y}: %{x:.4f}<extra></extra>"
+
+    num_factors = len(factor_contrib)
+    if factor_names is None:
+        factor_names = [f"Factor {i+1}" for i in range(num_factors)]
+
+    # 1. Systematic Factors Trace
+    # Use blue for factors
+    fig.add_trace(
+        go.Bar(
+            x=factor_contrib,
+            y=factor_names,
+            orientation="h",
+            name="Systematic Factors",
+            marker=dict(color="#1f77b4"),
+            hovertemplate=hover_template
+        )
+    )
+
+    # 2. Idiosyncratic Risk Trace
+    # Use orange/grey to separate specific risk
+    fig.add_trace(
+        go.Bar(
+            x=[np.sum(resid_contrib)],  # Residuals are typically a vector of asset-specific risks, sum them for total idiosyncratic
+            y=["Idiosyncratic (Specific)"],
+            orientation="h",
+            name="Idiosyncratic Risk",
+            marker=dict(color="#ff7f0e"),
+            hovertemplate=hover_template
+        )
+    )
+
+    # 3. Layout & Aesthetics
+    fig.update_layout(
+        title=title,
+        barmode="relative",  # Allows positive and negative bars to exist cleanly
+        xaxis_title=x_title,
+        yaxis=dict(title="Risk Source", autorange="reversed"),  # Reverse so Factor 1 is at top
+        xaxis_tickformat=".1%" if percentage else ".4f",
+        template="plotly_white",
+        legend=dict(
+            yanchor="bottom",
+            y=0.01,
+            xanchor="right",
+            x=0.99,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1
+        )
+    )
+
+    # Add a zero line to clearly show negative risk contributions (hedges)
+    fig.add_vline(x=0, line_width=1, line_color="black")
 
     return fig
 
@@ -198,6 +474,217 @@ def plot_dendrogram(
 
     # Rotate x-axis labels for better readability
     fig.update_xaxes(tickangle=45)
+
+    return fig
+
+
+def plot_network_allocation(
+    weights: pd.Series,
+    R: pd.DataFrame,
+    title: str = "Network Topology Allocation (Minimum Spanning Tree)",
+) -> go.Figure:
+    """
+    Plots an asset correlation network based on the Minimum Spanning Tree (MST).
+    Nodes are sized by their portfolio allocation weights.
+    Requires `networkx` to be installed.
+    """
+    try:
+        import networkx as nx
+    except ImportError:
+        raise ImportError("The 'networkx' package is required to plot network allocations. Please install it using 'pip install networkx'.")
+        
+    # 1. Filter: Build distance matrix and extract MST
+    corr = R.corr().values
+    dist = np.sqrt(0.5 * (1 - corr))
+    np.fill_diagonal(dist, 0)
+    
+    G = nx.Graph()
+    assets = list(weights.index)
+    N = len(assets)
+    
+    # Build fully connected graph
+    for i in range(N):
+        G.add_node(i, label=assets[i], weight=weights.iloc[i])
+        for j in range(i + 1, N):
+            G.add_edge(i, j, weight=dist[i, j], corr=corr[i, j])
+            
+    # Extract Minimum Spanning Tree (based on minimal distance -> maximum correlation)
+    mst = nx.minimum_spanning_tree(G, weight="weight")
+    
+    # 2. Calculate Spring Layout (highly correlated assets pull each other closer)
+    pos = nx.spring_layout(mst, weight="weight", seed=42)
+    
+    # 3. Construct Plotly Render Data
+    edge_x, edge_y = [], []
+    for edge in mst.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+        
+    node_x = [pos[i][0] for i in range(N)]
+    node_y = [pos[i][1] for i in range(N)]
+    
+    # Map weights to sizes and colors
+    # Ensure minimum size for visibility, scale up proportionally
+    w_vals = weights.values
+    node_text = [f"{assets[i]}<br>Weight: {w_vals[i]:.2%}" for i in range(N)]
+    # Scaling factor for node sizes
+    node_size = [max(18, w_vals[i] * 120) for i in range(N)] 
+    
+    fig = go.Figure()
+    
+    # Draw Edges
+    fig.add_trace(go.Scatter(
+        x=edge_x, y=edge_y, 
+        line=dict(width=1.5, color='#888'), 
+        hoverinfo='none', 
+        mode='lines',
+        name='MST Connections'
+    ))
+    
+    # Draw Nodes
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y, 
+        mode='markers+text', 
+        text=assets, 
+        textfont=dict(
+            family="sans serif",
+            size=11,
+            color="black"
+        ),
+        hovertext=node_text, 
+        hoverinfo='text',
+        textposition="top center",
+        name='Assets',
+        marker=dict(
+            showscale=True, 
+            colorscale='YlGnBu', 
+            color=w_vals, 
+            size=node_size,
+            line=dict(width=1.5, color='DarkSlateGrey'), 
+            colorbar=dict(title="Allocation Weight", tickformat=".1%")
+        )
+    ))
+    
+    fig.update_layout(
+        title=title, 
+        showlegend=False, 
+        template="plotly_white", 
+        hovermode="closest",
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+    )
+    
+    return fig
+
+
+def plot_return_histogram(
+    returns: pd.Series,
+    alpha: float = 0.05,
+    title: str = "Portfolio Returns Distribution",
+) -> go.Figure:
+    """
+    Plot a histogram of portfolio returns overlaid with a Kernel Density Estimate (KDE).
+    Adds vertical lines indicating Value at Risk (VaR) and Conditional Value at Risk (CVaR/ES) 
+    at the specified significance level alpha.
+    """
+    import plotly.figure_factory as ff
+    from .risk import CVaR
+    
+    # Drop NaNs
+    rets = returns.dropna()
+    if len(rets) == 0:
+        return go.Figure()
+
+    # Calculate VaR (historical simulation)
+    # Note: VaR/CVaR in risk.py are defined on losses (positive values), 
+    # but for the histogram X-axis, we want the actual negative return threshold.
+    var_threshold = np.percentile(rets.values, alpha * 100)
+    
+    # Calculate CVaR/ES (Expected Shortfall)
+    # We can use the risk.py function which expects weights=1 and R=rets.values.reshape(-1, 1)
+    # Alternatively, direct calculation:
+    tail_losses = rets[rets <= var_threshold]
+    cvar_threshold = tail_losses.mean() if len(tail_losses) > 0 else var_threshold
+
+    # Create distribution plot with histogram and KDE
+    fig = ff.create_distplot(
+        [rets.values],
+        group_labels=["Returns"],
+        bin_size=(rets.max() - rets.min()) / 50,
+        show_rug=False,
+        colors=["#1f77b4"]
+    )
+    
+    # Find max y to draw lines
+    max_y = max([max(trace.y) for trace in fig.data if hasattr(trace, 'y') and trace.y is not None])
+
+    # Add VaR line
+    fig.add_trace(
+        go.Scatter(
+            x=[var_threshold, var_threshold],
+            y=[0, max_y],
+            mode="lines",
+            name=f"VaR ({(1-alpha):.0%})",
+            line=dict(color="orange", width=2, dash="dash"),
+            hoverinfo="name+x"
+        )
+    )
+
+    # Add CVaR line
+    fig.add_trace(
+        go.Scatter(
+            x=[cvar_threshold, cvar_threshold],
+            y=[0, max_y],
+            mode="lines",
+            name=f"CVaR/ES ({(1-alpha):.0%})",
+            line=dict(color="red", width=2, dash="dot"),
+            hoverinfo="name+x"
+        )
+    )
+    
+    # Shade the tail region
+    # Find KDE trace (it's a scatter trace added by create_distplot)
+    kde_trace = next((trace for trace in fig.data if getattr(trace, 'type', '') == 'scatter' and getattr(trace, 'mode', '') == "lines" and getattr(trace, 'name', '') == "Returns"), None)
+    if kde_trace is not None:
+        x_kde = np.array(kde_trace.x)
+        y_kde = np.array(kde_trace.y)
+        
+        tail_mask = x_kde <= var_threshold
+        x_tail = x_kde[tail_mask]
+        y_tail = y_kde[tail_mask]
+        
+        if len(x_tail) > 0:
+            fig.add_trace(
+                go.Scatter(
+                    x=np.concatenate([x_tail, x_tail[::-1]]),
+                    y=np.concatenate([y_tail, np.zeros_like(y_tail)]),
+                    fill="toself",
+                    fillcolor="rgba(255, 0, 0, 0.2)",
+                    line=dict(color="rgba(255,0,0,0)"),
+                    name="Tail Risk Area",
+                    hoverinfo="skip",
+                    showlegend=False
+                )
+            )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Returns",
+        yaxis_title="Density",
+        xaxis_tickformat=".2%",
+        template="plotly_white",
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="rgba(0, 0, 0, 0.2)",
+            borderwidth=1
+        )
+    )
 
     return fig
 

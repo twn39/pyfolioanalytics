@@ -3,53 +3,59 @@ import pytest
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 
+import json
+import os
+
 def test_l_inf_tracking_error(stocks_data):
-    R = stocks_data.iloc[:, :5]
+    R = stocks_data.iloc[:100, :5]
     assets = list(R.columns)
     
-    # 1. Establish benchmark (e.g. Equal Weight)
+    # Load ground truth
+    json_path = "data/tracking_cv.json"
+    if not os.path.exists(json_path):
+        pytest.skip("data/tracking_cv.json not found. Run scripts/generate_tracking_cv.py first.")
+        
+    with open(json_path, "r") as f:
+        gt = json.load(f)
+        
+    w_expected = np.array(gt["L_inf_weights"])
+    
     w_bench = np.full(5, 1.0 / 5)
     
     port = Portfolio(assets=assets)
     port.add_constraint(type="full_investment")
     port.add_constraint(type="long_only")
     
-    # Restrict maximum absolute deviation from benchmark to 5% (0.05)
     port.add_constraint(type="tracking_error", benchmark=w_bench, target=0.05, p_norm="inf")
     
-    # Objective: Minimize standard deviation
     port.add_objective(type="risk", name="StdDev")
     
-    res = optimize_portfolio(R, port, optimize_method="ROI")
-    assert res["status"] in ["optimal", "optimal_inaccurate"]
-    w_opt = res["weights"]
+    res = optimize_portfolio(R, port, optimize_method="ROI", solver="SCS")
+    w_ours = res["weights"].values
     
-    # Check bounds
-    assert np.allclose(w_opt.sum(), 1.0)
-    assert np.all(w_opt >= -1e-6)
-    
-    # Check L-inf tracking error strictly bounds single deviations
-    diff = np.abs(w_opt - w_bench)
-    assert np.max(diff) <= 0.05 + 1e-5
-    
-    # Confirm it actually tried to move away from benchmark (min_vol != EW usually)
-    assert np.max(diff) > 0.01  # it should have used the slack
+    np.testing.assert_allclose(w_ours, w_expected, atol=5e-4)
     
 def test_l1_tracking_error(stocks_data):
-    R = stocks_data.iloc[:, :5]
+    R = stocks_data.iloc[:100, :5]
     assets = list(R.columns)
+    
+    json_path = "data/tracking_cv.json"
+    with open(json_path, "r") as f:
+        gt = json.load(f)
+        
+    w_expected = np.array(gt["L_1_weights"])
+    
     w_bench = np.full(5, 1.0 / 5)
     
     port = Portfolio(assets=assets)
     port.add_constraint(type="full_investment")
     port.add_constraint(type="long_only")
     
-    # L1 tracking error (like Active Share * 2) bounded to 10%
     port.add_constraint(type="tracking_error", benchmark=w_bench, target=0.10, p_norm=1)
     port.add_objective(type="risk", name="StdDev")
     
-    res = optimize_portfolio(R, port, optimize_method="ROI")
-    w_opt = res["weights"]
-    diff = np.abs(w_opt - w_bench)
-    assert np.sum(diff) <= 0.10 + 1e-5
+    res = optimize_portfolio(R, port, optimize_method="ROI", solver="SCS")
+    w_ours = res["weights"].values
+    
+    np.testing.assert_allclose(w_ours, w_expected, atol=5e-4)
 

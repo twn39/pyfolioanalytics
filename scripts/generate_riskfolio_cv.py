@@ -45,6 +45,18 @@ def generate_riskfolio_cv():
         "div_ratio": float(div_ratio),
     }
 
+    # 3. Minimum Ulcer Index (UCI)
+    port_uci = rp.Portfolio(returns=df)
+    port_uci.assets_stats(method_mu="hist", method_cov="hist")
+    w_min_uci = port_uci.optimization(model="Classic", rm="UCI", obj="MinRisk", rf=0)
+    
+    results["min_uci"] = {"weights": w_min_uci["weights"].to_dict()}
+    
+    # 4. Maximum Return/UCI (Martin Ratio)
+    w_max_martin = port_uci.optimization(model="Classic", rm="UCI", obj="Sharpe", rf=0)
+    
+    results["max_martin"] = {"weights": w_max_martin["weights"].to_dict()}
+
     # Save to JSON
     output_path = "data/riskfolio_cv.json"
     with open(output_path, "w") as f:

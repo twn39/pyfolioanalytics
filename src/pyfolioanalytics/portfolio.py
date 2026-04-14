@@ -93,6 +93,8 @@ class Portfolio:
         elif type == "position_limit":
             constraint.update({"max_pos": kwargs.get("max_pos")})
         elif type == "tracking_error":
+            if "benchmark" not in kwargs:
+                raise ValueError("tracking_error constraint requires a 'benchmark' argument.")
             constraint.update(
                 {
                     "target": kwargs.get("target", 0.05),
@@ -101,6 +103,8 @@ class Portfolio:
                 }
             )
         elif type == "active_share":
+            if "benchmark" not in kwargs:
+                raise ValueError("active_share constraint requires a 'benchmark' argument.")
             constraint.update(
                 {
                     "active_share_target": kwargs.get("target", 0.6),

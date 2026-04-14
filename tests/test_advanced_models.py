@@ -66,3 +66,39 @@ def test_mdiv_ratio_parity(stocks_data, riskfolio_cv):
 
     expected_ratio = riskfolio_cv["mdiv"]["div_ratio"]
     assert np.isclose(div_ratio, expected_ratio, atol=1e-5)
+
+
+def test_min_uci_parity(stocks_data, riskfolio_cv):
+    assets = stocks_data.iloc[:100].columns.tolist()
+    port = Portfolio(assets=assets)
+    port.add_constraint(type="full_investment")
+    port.add_constraint(type="long_only")
+    port.add_objective(type="risk", name="UCI")
+    
+    res = optimize_portfolio(stocks_data.iloc[:100], port, optimize_method="ROI")
+    w_ours = res["weights"].values
+    
+    # Ground truth from JSON
+    w_expected = pd.Series(riskfolio_cv["min_uci"]["weights"]).values
+
+    # We use a relatively high tolerance (1e-4) as Riskfolio and our ConvexOptimizer 
+    # might use different default kwargs for the underlying SOCP solver (ECOS/SCS)
+    np.testing.assert_allclose(w_ours, w_expected, atol=1e-4)
+
+
+def test_max_martin_ratio_parity(stocks_data, riskfolio_cv):
+    assets = stocks_data.iloc[:100].columns.tolist()
+    port = Portfolio(assets=assets)
+    port.add_constraint(type="full_investment")
+    port.add_constraint(type="long_only")
+    # No risk-free rate in R / Riskfolio default unless specified
+    port.add_objective(type="return", name="mean", arguments={"risk_free_rate": 0.0})
+    port.add_objective(type="risk", name="UCI")
+    
+    res = optimize_portfolio(stocks_data.iloc[:100], port, optimize_method="ROI")
+    w_ours = res["weights"].values
+    
+    # Ground truth from JSON
+    w_expected = pd.Series(riskfolio_cv["max_martin"]["weights"]).values
+
+    np.testing.assert_allclose(w_ours, w_expected, atol=5e-4)
