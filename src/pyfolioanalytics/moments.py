@@ -15,7 +15,7 @@ def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd
     the boundaries of the chi-squared distribution.
     """
     is_df = isinstance(R, pd.DataFrame)
-    R_vals = R.values if is_df else np.asarray(R)
+    R_vals = R.values if isinstance(R, pd.DataFrame) else np.asarray(R)
     T, N = R_vals.shape
     
     # 1. Robust Mean and Covariance estimation (MCD)
@@ -53,7 +53,7 @@ def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd
     # 5. Winsorization (scaling back outliers)
     R_clean = mu_mcd + diff * scaling_factors[:, np.newaxis]
     
-    if is_df:
+    if isinstance(R, pd.DataFrame):
         return pd.DataFrame(R_clean, index=R.index, columns=R.columns)
     return R_clean
 
@@ -333,7 +333,7 @@ def set_portfolio_moments(
     clean_method = kwargs.get("clean_returns")
     if clean_method == "boudt":
         alpha = kwargs.get("clean_alpha", 0.05)
-        R_filtered = clean_returns_boudt(R_filtered, alpha=alpha)
+        R_filtered = pd.DataFrame(clean_returns_boudt(R_filtered, alpha=alpha), columns=R_filtered.columns, index=R_filtered.index)
 
     if method == "sample":
         moments["mu"] = R_filtered.mean().values.reshape(-1, 1)

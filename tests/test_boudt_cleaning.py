@@ -19,7 +19,7 @@ def test_boudt_cleaning():
     df_R = pd.DataFrame(R, columns=['A', 'B', 'C'])
     
     # 3. Clean returns
-    df_clean = clean_returns_boudt(df_R, alpha=0.05)
+    df_clean = pd.DataFrame(clean_returns_boudt(df_R, alpha=0.05), columns=df_R.columns, index=df_R.index)
     
     # Verify shape is preserved
     assert df_clean.shape == (100, 3)

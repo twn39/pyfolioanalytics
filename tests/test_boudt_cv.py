@@ -25,7 +25,7 @@ def test_boudt_cleaning_parity():
     # What we care about is that BOTH algorithms detect the exact same structural outliers 
     # and shrink them appropriately.
     
-    R_clean_py = clean_returns_boudt(R, alpha=0.05).values
+    R_clean_py = pd.DataFrame(clean_returns_boudt(R, alpha=0.05), columns=R.columns, index=R.index).values
     
     # Find outliers identified by R
     r_diff = np.abs(R_r - R_clean_r)

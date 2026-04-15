@@ -291,10 +291,14 @@ class ConvexOptimizer:
 
         return {"status": prob.status, "weights": self.w.value, "obj_value": prob.value}
 
-    def _solve_ratio(self, return_obj: dict[str, Any], risk_obj: dict[str, Any]) -> dict[str, Any]:
+    def _solve_ratio(
+        self, return_obj: dict[str, Any] | None, risk_obj: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """
         Solve Ratio Optimization (e.g., Sharpe, STARR) using Charnes-Cooper transformation.
         """
+        assert return_obj is not None
+        assert risk_obj is not None
         kappa = cp.Variable(nonneg=True)
         # w is now acting as y = kappa * w_real
         self._build_base_constraints(kappa=kappa)
