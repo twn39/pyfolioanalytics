@@ -207,6 +207,7 @@ class ConvexOptimizer:
     def solve(self) -> dict[str, Any]:
         return_obj = None
         risk_obj = None
+        risk_budget_obj = None
 
         for obj in self.objectives:
             if not obj.get("enabled", True):
@@ -215,6 +216,11 @@ class ConvexOptimizer:
                 return_obj = obj
             elif obj["type"] in ["risk", "portfolio_risk_objective"]:
                 risk_obj = obj
+            elif obj["type"] == "risk_budget":
+                risk_budget_obj = obj
+
+        if risk_budget_obj:
+            return self._solve_risk_parity(return_obj, risk_budget_obj)
 
         # Check if we should do Ratio Optimization
         is_ratio_opt = False
@@ -289,6 +295,70 @@ class ConvexOptimizer:
             return {"status": "failed", "weights": None, "message": str(e)}
 
         return {"status": prob.status, "weights": self.w.value, "obj_value": prob.value}
+
+    def _solve_risk_parity(
+        self, return_obj: dict[str, Any] | None, risk_budget_obj: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Solve exact Risk Parity (Equal Risk Contribution) using Spinu's logarithmic barrier formulation.
+        Works for all convex, positive-homogeneous coherent risk measures (StdDev, CVaR, MAD, CDaR, etc.).
+        """
+        # 1. Determine target risk budgets b
+        b = risk_budget_obj.get("arguments", {}).get("target")
+        if b is None:
+            b = np.full(self.n, 1.0 / self.n)  # default ERC
+        
+        # 2. Constraints setup
+        kappa = cp.sum(self.w)
+        # Prevent log(0) domain errors in CVXPY
+        self.add_constraint(self.w >= 1e-8)
+        self._build_base_constraints(kappa=kappa)
+        
+        # Process Return Objective Term if any (usually not for pure parity)
+        if return_obj is not None:
+            ret_target = return_obj.get("target")
+            if ret_target is not None:
+                mu_vec = self.moments["mu"].flatten()
+                self.add_constraint(mu_vec @ self.w >= ret_target * kappa)
+
+        # 3. Build Risk expression
+        risk_name = risk_budget_obj.get("name", "StdDev")
+        if risk_name in ["Variance"]:
+            risk_name = "StdDev"
+            
+        strategy_cls = RISK_STRATEGIES.get(risk_name)
+        if not strategy_cls:
+            raise ValueError(f"Unsupported convex risk measure for exact Risk Parity: {risk_name}")
+            
+        strategy = strategy_cls()
+        risk_term = strategy.build(self, risk_budget_obj.get("arguments", {}))
+        
+        # 4. Objective = Risk(w) - \sum b_i log(w_i)
+        if isinstance(strategy, MeanVarianceStrategy):
+            # Variance is degree 2, coefficient is 0.5
+            obj_expr = 0.5 * risk_term - cp.sum(cp.multiply(b, cp.log(self.w)))
+        else:
+            # Other coherent risk measures are degree 1
+            obj_expr = risk_term - cp.sum(cp.multiply(b, cp.log(self.w)))
+            
+        prob = cp.Problem(cp.Minimize(obj_expr + sum(self.objective_terms)), self.cp_constraints)
+        
+        try:
+            self._execute_solve(prob)
+        except Exception as e:
+            return {"status": "failed", "weights": None, "message": str(e)}
+            
+        if prob.status in ["optimal", "optimal_inaccurate"] and self.w.value is not None:
+            # Normalize auxiliary variable to sum to target weight_sum (typically 1.0)
+            real_weights = self.w.value / np.sum(self.w.value)
+            
+            target_sum = self.constraints.get("min_sum", 1.0)
+            if target_sum != -np.inf:
+                 real_weights *= target_sum
+        else:
+            real_weights = None
+            
+        return {"status": prob.status, "weights": real_weights, "obj_value": prob.value}
 
     def _solve_ratio(
         self, return_obj: dict[str, Any] | None, risk_obj: dict[str, Any] | None

@@ -14,6 +14,8 @@ from .risk import (
     CDaR,
     EDaR,
     EVaR,
+    LPM,
+    UCI,
     RLDaR,
     RLVaR,
     VaR,
@@ -88,6 +90,10 @@ def calculate_objective_measures(
             measures[obj_name] = average_drawdown(weights, R)
         elif obj_name == "CDaR" and R is not None:
             measures[obj_name] = CDaR(weights, R, **obj_args)
+        elif obj_name == "LPM" and R is not None:
+            measures[obj_name] = LPM(weights, R, **obj_args)
+        elif obj_name == "UCI" and R is not None:
+            measures[obj_name] = UCI(weights, R, **obj_args)
         elif obj_name == "OWA" and R is not None:
             owa_weights = obj_args.get("owa_weights")
             if owa_weights is None:
@@ -318,6 +324,7 @@ def optimize_portfolio(
     # 6. Direct optimization for specific measures
     result = None
     enabled_objs = [obj for obj in portfolio.objectives if obj.get("enabled", True)]
+    opt_objs = portfolio.objectives
     has_risk_budget = any(obj.get("type") == "risk_budget" for obj in enabled_objs)
 
     if not has_risk_budget and optimize_method not in [
@@ -416,13 +423,20 @@ def optimize_portfolio(
         elif optimize_method == "CLA":
             result = solve_cla(moments, constraints, portfolio.objectives, **kwargs)
         elif has_risk_budget:
-            result = solve_nonlinear(
-                moments,
-                constraints,
-                portfolio.objectives,
-                R=R.values if R is not None else None,
-                **kwargs,
+            # We first attempt exact convex risk parity for cohesive measures (Spinu formulation)
+            opt = ConvexOptimizer(
+                moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs
             )
+            result = opt.solve()
+            if result.get("status") not in ["optimal", "optimal_inaccurate"]:
+                # Fallback to SLSQP nonlinear penalty if exact approach fails or measure is not supported
+                result = solve_nonlinear(
+                    moments,
+                    constraints,
+                    portfolio.objectives,
+                    R=R.values if R is not None else None,
+                    **kwargs,
+                )
         else:
             # Fallback (should be covered by ConvexOptimizer now)
             opt = ConvexOptimizer(
