@@ -14,7 +14,7 @@ def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd
     (Minimum Covariance Determinant) robust estimates and scales them back to 
     the boundaries of the chi-squared distribution.
     """
-    is_df = isinstance(R, pd.DataFrame)
+    isinstance(R, pd.DataFrame)
     R_vals = R.values if isinstance(R, pd.DataFrame) else np.asarray(R)
     T, N = R_vals.shape
     
