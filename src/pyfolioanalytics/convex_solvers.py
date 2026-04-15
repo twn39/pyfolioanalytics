@@ -92,12 +92,11 @@ class ConvexOptimizer:
             for A_eq, b_eq in zip(c["linear_A_eq"], c["linear_b_eq"]):
                 self.add_constraint(A_eq @ w == b_eq * kappa)
 
-        # 7. Position Limits (requires MIQP)
-        if c.get("max_pos") is not None:
-            z = cp.Variable(self.n, boolean=True)
-            W_max = np.maximum(1.0, c["max"].values) * 1000.0 if isinstance(kappa, cp.Variable) else np.maximum(1.0, c["max"].values)
-            self.add_constraint(w <= cp.multiply(z, W_max))
-            self.add_constraint(cp.sum(z) <= c["max_pos"])
+        # 7. Position Limits (max_pos)
+        # To strictly guarantee max_pos, it requires MIQP (Mixed-Integer Quadratic Programming) which fails on open-source solvers (ECOS/SCS).
+        # We handle this natively and gracefully via a Two-Step Alternating Heuristic in optimize.py 
+        # or via global heuristics in solvers.py. Do not use boolean variables here.
+        pass
 
         # 8. Tracking Error & Active Share
         te_target = c.get("target")
@@ -593,6 +592,34 @@ class RLDaRStrategy(RiskModelStrategy):
         return (t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)) / scale
 
 
+class CDaRStrategy(RiskModelStrategy):
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
+            raise ValueError("CDaR requires historical returns R.")
+        T = optimizer.T
+        p = arguments.get("p", 0.95)
+        alpha = 1.0 - p
+
+        cum_ret = cp.Variable(T + 1)
+        peak = cp.Variable(T + 1)
+        d = cp.Variable(T)
+
+        optimizer.add_constraint(cum_ret[0] == 0)
+        optimizer.add_constraint(peak[0] == 0)
+        for i in range(T):
+            optimizer.add_constraint(cum_ret[i + 1] == cum_ret[i] + optimizer.R[i] @ optimizer.w)
+            optimizer.add_constraint(peak[i + 1] >= cum_ret[i + 1])
+            optimizer.add_constraint(peak[i + 1] >= peak[i])
+            optimizer.add_constraint(d[i] == peak[i + 1] - cum_ret[i + 1])
+
+        t = cp.Variable()
+        u = cp.Variable(T)
+        for i in range(T):
+            optimizer.add_constraint(u[i] >= d[i] - t)
+        optimizer.add_constraint(u >= 0)
+
+        return t + cp.sum(u) / (T * alpha)
+
 class CVaRStrategy(RiskModelStrategy):
     def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
         if optimizer.R is None:
@@ -631,8 +658,29 @@ class UlcerIndexStrategy(RiskModelStrategy):
 
         return cp.norm(d, 2) / np.sqrt(T)
 
+class LPMStrategy(RiskModelStrategy):
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
+            raise ValueError("LPM requires historical returns R.")
+        T = optimizer.T
+        p = arguments.get("p", 2)
+        rf = arguments.get("rf", 0.0)
+
+        lpm = cp.Variable(T)
+        optimizer.add_constraint(lpm >= 0)
+        optimizer.add_constraint(lpm >= rf - optimizer.R @ optimizer.w)
+
+        if p == 1:
+            return cp.sum(lpm) / T
+        elif p == 2:
+            return cp.norm(lpm, 2) / np.sqrt(T - 1)
+        else:
+            raise ValueError("Convex LPM currently only supports p=1 (Omega) or p=2 (Sortino).")
+
+RISK_STRATEGIES["LPM"] = LPMStrategy
 RISK_STRATEGIES["UCI"] = UlcerIndexStrategy
 RISK_STRATEGIES["RLVaR"] = RLVaRStrategy
 RISK_STRATEGIES["RLDaR"] = RLDaRStrategy
 RISK_STRATEGIES["CVaR"] = CVaRStrategy
 RISK_STRATEGIES["ES"] = CVaRStrategy
+RISK_STRATEGIES["CDaR"] = CDaRStrategy

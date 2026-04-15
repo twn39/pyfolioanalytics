@@ -361,14 +361,43 @@ def optimize_portfolio(
             opt_objs = portfolio.objectives
 
         if risk_name in RISK_STRATEGIES or risk_name in ["var"]:
-            opt = ConvexOptimizer(
-                moments,
-                constraints,
-                opt_objs,
-                R=R.values if R is not None else None,
-                **kwargs,
-            )
-            result = opt.solve()
+            max_pos = constraints.get("max_pos")
+            assets_keys = list(portfolio.assets.keys())
+            if max_pos is not None and max_pos < len(assets_keys):
+                opt = ConvexOptimizer(
+                    moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs
+                )
+                relaxed_result = opt.solve()
+                
+                if relaxed_result.get("status") in ["optimal", "optimal_inaccurate"]:
+                    w_relaxed = relaxed_result["weights"]
+                    top_indices = np.argsort(w_relaxed)[-max_pos:]
+                    
+                    locked_constraints = constraints.copy()
+                    locked_max = locked_constraints["max"].copy()
+                    locked_min = locked_constraints["min"].copy()
+                    
+                    mask = np.ones(len(assets_keys), dtype=bool)
+                    mask[top_indices] = False
+                    
+                    locked_max.iloc[mask] = locked_min.iloc[mask]
+                    locked_constraints["max"] = locked_max
+                    
+                    opt_locked = ConvexOptimizer(
+                        moments, locked_constraints, opt_objs, R=R.values if R is not None else None, **kwargs
+                    )
+                    result = opt_locked.solve()
+                else:
+                    result = relaxed_result
+            else:
+                opt = ConvexOptimizer(
+                    moments,
+                    constraints,
+                    opt_objs,
+                    R=R.values if R is not None else None,
+                    **kwargs,
+                )
+                result = opt.solve()
 
     if result is None:
         if optimize_method in ["DEoptim", "GenSA", "PSO"]:

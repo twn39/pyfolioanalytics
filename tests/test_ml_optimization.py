@@ -49,7 +49,7 @@ def test_hrp_cross_validation(stocks_data):
         rm="MV",
         linkage="single",
         max_k=10,
-        leaf_order=True,
+        leaf_order=False,
     )
 
     # Parity check

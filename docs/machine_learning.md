@@ -1,61 +1,114 @@
-# 机器学习与图论配置 (`ml.py` & `dbht.py`)
+# 进阶教程 6：放弃求逆，用机器学习重塑风险平价 (Hierarchical Risk Parity)
 
-传统均值-方差优化 (MVO) 对协方差矩阵求逆时高度敏感，极易放大估计误差。本模块提供了一系列基于**图论拓扑聚类**和**层次聚类**的无偏机器学习资金配置模型，能在不直接求逆的情况下解决强相关性资产带来的权重极端化问题。
+马科维茨的“均值-方差”模型赢得了诺贝尔奖，但在过去的几十年实盘中，基金经理们对它又爱又恨。
 
-## 核心 API
+最大的问题是：传统的凸优化器对协方差矩阵太“敏感”了。只要历史数据稍有噪音，甚至两只股票恰巧在过去某段时间相关性达到了 0.99，传统的数学引擎就会在求逆矩阵时崩溃，并给出一个荒谬的极端“梭哈”配置（例如：做多 A 股票 1000%，做空 B 股票 900%）。
 
-所有函数的输入均为资产的协方差矩阵或收益率相关数据，输出为标准化资产权重（`pd.Series`）。
+2016 年，金融机器学习领军人物 Marcos López de Prado 提出了 **HRP（层次风险平价）** 算法。它彻底**放弃了矩阵求逆**，而是引入了无监督的“层次聚类（Hierarchical Clustering）”。
 
-### `hrp_portfolio(sigma, linkage_method='ward')`
-**分层风险平价 (Hierarchical Risk Parity, HRP)**
-1. 基于协方差/相关性矩阵计算资产间距离。
-2. 使用层次聚类将资产归类并构建树状图。
-3. 执行矩阵的拟对角化。
-4. 递归的等分二分法自上而下分配风险。
+本篇教程，我们将离开科技股，使用量化界极具代表性的 **EDHEC 对冲基金指数**（涵盖 13 种不同的对冲策略的月度收益），来看看 HRP 是如何碾压传统马科维茨的。
 
-### `herc_portfolio(sigma, linkage_method='ward', risk_measure='variance', R=None)`
-**分层等风险贡献 (Hierarchical Equal Risk Contribution, HERC)**
-相比 HRP，HERC：
-- 在聚类分配树节点时，不仅仅使用方差（`variance`），还支持 `std_dev`, `mad`, `cvar`, `cdar` 等尾部和绝对偏差风险测度（需同时传入 `R`）。
-- 允许根据聚类树剪枝后，在同簇内部进一步执行风险平价或等权配置。
+## 1. 传统马科维茨的“梭哈”绝症 (Corner Solutions)
 
-### `nco_portfolio(mu, sigma, max_clusters=None)`
-**嵌套聚类优化 (Nested Clustered Optimization, NCO)**
-1. 利用 KMeans 或轮廓系数聚类将矩阵分解为弱相关的子块。
-2. 在每个强相关的子块（Cluster）内部运行传统的局域最优配置。
-3. 将每个簇视为单一宏观资产，在簇间执行全局风险平价组合，彻底剥离协方差矩阵病态特征值的影响。
-
-### `dbht.py` 模块
-实现 **有向加权图与最大平面子图 (Directed Bubble Hierarchical Tree, DBHT)**：
-提取复杂的拓扑数据网络过滤方法，可以用 `method='dbht'` 替代传统 `scipy` 的层次聚类。
-
-## 代码示例
+我们先用经典的 `StdDev`（最小方差）去跑这 13 个对冲基金指数，看看传统数学引擎会给我们什么建议：
 
 ```python
 import pandas as pd
-import numpy as np
-from pyfolioanalytics.ml import hrp_portfolio, nco_portfolio
+from pyfolioanalytics.portfolio import Portfolio
+from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.plots import plot_dendrogram
 
-# 构造具有特定相关性组块的数据
-np.random.seed(42)
-T, N = 200, 6
-factor1 = np.random.randn(T, 1)
-factor2 = np.random.randn(T, 1)
+# 1. 读取 EDHEC 的 13 个子策略指数月度数据
+returns = pd.read_csv("data/edhec.csv", index_col="date", parse_dates=True, dayfirst=True).iloc[:100]
+port = Portfolio(assets=list(returns.columns))
 
-R_data = np.hstack([
-    factor1 + np.random.randn(T, 3)*0.5, # 前3个资产高相关
-    factor2 + np.random.randn(T, 3)*0.5  # 后3个资产高相关
-]) * 0.01
+# [对立面] 传统的马科维茨全局最小方差组合 (GMV)
+port_gmv = port.copy()
+port_gmv.add_constraint(type="weight_sum", min_sum=1.0, max_sum=1.0)
+port_gmv.add_constraint(type="long_only")
+port_gmv.add_objective(type="risk", name="StdDev")
 
-R = pd.DataFrame(R_data, columns=[f"A{i}" for i in range(1, 7)])
-sigma = R.cov()
-mu = R.mean().values
+res_gmv = optimize_portfolio(returns, port_gmv, optimize_method="ROI")
 
-# 1. 运行 HRP 
-w_hrp = hrp_portfolio(sigma.values, linkage_method='ward')
-print("HRP Weights:\n", pd.Series(w_hrp, index=R.columns))
-
-# 2. 运行 NCO (嵌套聚类优化)
-w_nco = nco_portfolio(mu, sigma.values, max_clusters=2)
-print("NCO Weights:\n", pd.Series(w_nco, index=R.columns))
+# 打印权重大于 1% 的资产
+for asset, w in res_gmv['weights'].items():
+    if w > 0.01:
+        print(f"{asset}: {w:.2%}")
 ```
+
+**传统模型的结果（灾难性的集中度）**：
+```text
+Distressed Securities: 3.45%
+Equity Market Neutral: 72.15%
+Fixed Income Arbitrage: 3.87%
+Relative Value: 14.66%
+Short Selling: 5.86%
+```
+看到了吗？尽管我们输入了 13 种截然不同、用来分散风险的对冲策略，但优化器却把 **72.15%** 的资金全部“梭哈”给了 `Equity Market Neutral`（股票市场中性）这一个策略！剩下的 8 个策略（如全球宏观、新兴市场等）直接被分配了 **0权重**。
+
+这不仅违背了我们“分散投资”的初衷，而且一旦 `Equity Market Neutral` 在未来遭遇黑天鹅，整个母基金将面临灭顶之灾。
+
+## 2. 拥抱机器学习：调用 HRP
+
+HRP 算法从根本上改变了游戏规则。它认为：**高度相关的资产应该被视为一个整体（Cluster）进行预算分配，而不是让它们互相厮杀抢夺权重。**
+
+在 `PyFolioAnalytics` 中，调用 HRP 非常简单，因为它**不需要**声明具体的线性约束（它内置了基于树图的等权重切分和 `long_only` 满仓分配逻辑）：
+
+```python
+# [进化] 层次风险平价 (HRP - Hierarchical Risk Parity)
+res_hrp = optimize_portfolio(
+    returns, 
+    port, 
+    optimize_method="HRP", 
+    linkage="single" # 聚类距离链的计算方式
+)
+
+# 打印所有资产权重
+for asset, w in res_hrp['weights'].items():
+    print(f"{asset}: {w:.2%}")
+```
+
+**HRP 惊艳的分配结果**：
+```text
+Convertible Arbitrage: 13.90%
+CTA Global: 3.54%
+Distressed Securities: 2.00%
+Emerging Markets: 1.02%
+Equity Market Neutral: 33.69%
+Event Driven: 1.87%
+Fixed Income Arbitrage: 20.42%
+Global Macro: 4.27%
+Long/Short Equity: 1.18%
+Merger Arbitrage: 6.95%
+Relative Value: 8.68%
+Short Selling: 0.69%
+Funds Of Funds: 1.78%
+```
+
+你看！HRP 没有丢下任何一个策略！
+它并没有无脑地“平均分（每个 7.6%）”，也没有偏执地“把 72% 给一个人”。
+它通过机器学习识别到 `Equity Market Neutral` 和 `Fixed Income Arbitrage` 在各自的“相关性簇”中方差较小，于是给予了合理的重仓（33% 和 20%）。同时，它给那些高波动、或高相关性的“拥挤赛道”（如 `Emerging Markets`）分配了用来控制风险底线的较低权重（1% 左右）。
+
+## 3. 金融“族谱树” (Dendrogram) 可视化
+
+HRP 之所以能如此聪明，是因为它在内部分三个步骤完成：
+1. **层次聚类 (Tree Clustering)**：计算两两资产的距离，画出一棵树。
+2. **拟对角化 (Quasi-Diagonalization)**：将树图压扁，让相关性最强的资产挨在一起。
+3. **递归二分 (Recursive Bisection)**：从树根开始，每次分叉处，根据左右两个子分支内部的方差总和，按反比分配资金。
+
+我们的底层包含了一个极其强大的可视化工具，让你一眼看清这 13 个策略的真实“血缘关系”：
+
+```python
+from pyfolioanalytics.plots import plot_dendrogram
+
+# 绘制交互式的金融聚类树图
+fig = plot_dendrogram(returns, linkage_method="single")
+fig.show()
+```
+运行上述代码，浏览器会弹出一张形似基因图谱的结构图。你会惊讶地发现，机器完全不需要人工打标签，就能通过收益率的跳动，自动把 `Event Driven` 和 `Merger Arbitrage` （事件驱动与并购套利，在现实中确实是一套体系）聚成了最近的“亲兄弟”。
+
+## 总结
+
+当遇到维度爆炸、相关性陷阱、或是对传统凸优化的“梭哈现象”感到失望时，请将 `optimize_method` 切换为 `"HRP"` 乃至更先进的 `"HERC"` 或 `"NCO"`。
+
+机器学习在量化配置中大放异彩的时代已经到来，而您手中掌握的，正是这套新时代利器的核心钥匙。

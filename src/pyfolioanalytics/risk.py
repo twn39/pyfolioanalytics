@@ -287,6 +287,23 @@ def EDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     return _solve_evar_scalar(-calculate_drawdowns(p_returns), 1 - p)
 
 
+def LPM(weights: np.ndarray, R: np.ndarray, p: int = 2, rf: float = 0.0) -> float:
+    """
+    Lower Partial Moment of order p.
+    p=1 corresponds to Expected Shortfall below target (Omega Ratio denominator).
+    p=2 corresponds to Semi-Variance (Sortino Ratio denominator).
+    """
+    p_returns = np.dot(R, weights)
+    shortfall = np.maximum(rf - p_returns, 0)
+    
+    if p == 1:
+        return float(np.mean(shortfall))
+    elif p == 2:
+        return float(np.sqrt(np.sum(shortfall ** 2) / (len(p_returns) - 1)))
+    else:
+        return float(np.mean(shortfall ** p) ** (1/p))
+
+
 def UCI(weights: np.ndarray, R: np.ndarray, **kwargs) -> float:
     """
     Calculate the Ulcer Index (Root Mean Square Drawdown) of a portfolio

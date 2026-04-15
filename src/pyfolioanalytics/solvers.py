@@ -373,6 +373,13 @@ def solve_nonlinear(
                 from .risk import EVaR
 
                 out += mult * EVaR(w, R, p=obj.get("arguments", {}).get("p", 0.95))
+                
+        max_pos = constraints.get("max_pos")
+        if max_pos is not None:
+            num_pos = np.sum(w > 1e-4)
+            if num_pos > max_pos:
+                out += 1e6 * (num_pos - max_pos)
+
         return out
 
     cons = []
