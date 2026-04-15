@@ -1,7 +1,6 @@
 import numpy as np
-import pytest
 
-from pyfolioanalytics.moments import M3_MM, M4_MM
+from pyfolioanalytics.moments import M3_MM
 from pyfolioanalytics.risk import calculate_drawdowns, owa_cvar_weights, owa_gmd_weights
 
 def test_calculate_drawdowns_unit():

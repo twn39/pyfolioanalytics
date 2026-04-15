@@ -487,7 +487,7 @@ def solve_global_heuristic(
         w_out = (w_out / sum_w) * constraints["min_sum"]
 
     return {
-        "status": "optimal" if res.success else "failed",
+        "status": "optimal" if res.success else res.message,
         "weights": w_out,
         "obj_value": res.fun,
     }

@@ -40,7 +40,7 @@ def PMFG_T2s(W, nargout=3):
     s = np.sum(W * (W > np.mean(W)), axis=1)
     j = np.int32(np.argsort(s)[::-1].reshape(-1))
 
-    in_v[0:4] = [int(x) for x in j[0:4]]
+    in_v[0:4] = j[0:4]
     ou_v = np.setdiff1d(np.arange(0, N), in_v)
     tri[0, :] = in_v[[0, 1, 2]]
     tri[1, :] = in_v[[1, 2, 3]]
@@ -356,8 +356,8 @@ def DirectHb(Rpm, Hb, Mb, Mv, CliqList):
         d[np.isinf(d)] = -1
         d[0] = 0
         vo = np.int32(CliqList[int(CliqEdge[n, 2]), :])
-        bleft = CliqEdge[n, 0:2][d[[int(x) for x in CliqEdge[n, 0:2]]] != -1]
-        bright = CliqEdge[n, 0:2][d[[int(x) for x in CliqEdge[n, 0:2]]] == -1]
+        bleft = CliqEdge[n, 0:2][d[np.int32(CliqEdge[n, 0:2])] != -1]
+        bright = CliqEdge[n, 0:2][d[np.int32(CliqEdge[n, 0:2])] == -1]
         vleft = np.setdiff1d(np.argwhere(Mv[:, d != -1] != 0)[:, 0], vo)
         vright = np.setdiff1d(np.argwhere(Mv[:, d == -1] != 0)[:, 0], vo)
         left, right = np.sum(Rpm[np.ix_(vo, vleft)]), np.sum(Rpm[np.ix_(vo, vright)])
@@ -365,7 +365,7 @@ def DirectHb(Rpm, Hb, Mb, Mv, CliqList):
             Hc[np.ix_(bright, bleft)] = left
         else:
             Hc[np.ix_(bleft, bright)] = right
-    Sep = np.double(np.sum(Hc.T, axis=0) == 0)
+    Sep = np.double(np.sum(Hc.T, axis=0) == 0).copy()
     Sep[np.logical_and(np.sum(Hc, axis=0) == 0, kb > 1)] = 2
     return (Hc, Sep)
 

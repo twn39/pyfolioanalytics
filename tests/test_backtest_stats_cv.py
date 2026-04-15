@@ -1,8 +1,6 @@
-import pytest
 import pandas as pd
 import numpy as np
 from pyfolioanalytics.backtest import BacktestResult
-import riskfolio as rp
 
 
 def test_backtest_stats_cv(stocks_data):

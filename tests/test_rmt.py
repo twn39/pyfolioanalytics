@@ -108,7 +108,6 @@ def test_gerber_statistic():
 
 def test_detone_covariance():
     np.random.seed(42)
-    N = 4
     sigma = np.diag([4.0, 3.0, 2.0, 1.0])
 
     detoned = detone_covariance(sigma, n_components=1)

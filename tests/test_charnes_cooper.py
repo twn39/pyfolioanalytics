@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 
@@ -12,8 +11,8 @@ def test_charnes_cooper_sharpe(stocks_data):
     # Enable both return (maximize) and risk (minimize), which triggers max_ratio default (Sharpe)
     port.add_objective(type="return", name="mean")
     port.add_objective(type="risk", name="StdDev")
-    
-    res = optimize_portfolio(R, port, optimize_method="ROI")
+
+    res = optimize_portfolio(R, port, optimize_method="ROI", max_ratio=True)
     assert res["status"] in ["optimal", "optimal_inaccurate"]
     weights = res["weights"]
     

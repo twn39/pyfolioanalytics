@@ -1,4 +1,3 @@
-import pytest
 import pandas as pd
 import numpy as np
 from pyfolioanalytics.backtest import BacktestResult
@@ -42,10 +41,8 @@ def test_underwater_drawdown_plot():
 
     dates = pd.date_range("2023-01-01", periods=5, freq="D")
     returns = pd.Series([0.01, -0.05, -0.02, 0.03, 0.05], index=dates)
-    br = BacktestResult(pd.DataFrame(), returns, [])
-
-    fig = plot_underwater_drawdown(br, show=False)
+    fig = plot_underwater_drawdown(returns)
     import plotly.graph_objects as go
 
     assert isinstance(fig, go.Figure)
-    assert len(fig.data) == 1
+    assert len(fig.data) == 6

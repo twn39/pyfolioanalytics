@@ -223,7 +223,7 @@ class ConvexOptimizer:
             ret_target = return_obj.get("target")
             risk_target = risk_obj.get("target")
             if ret_target is None and risk_target is None:
-                is_ratio_opt = self.kwargs.get("max_ratio", True)
+                is_ratio_opt = self.kwargs.get("max_ratio", False)
 
         if is_ratio_opt:
             return self._solve_ratio(return_obj, risk_obj)

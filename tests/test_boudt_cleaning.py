@@ -5,7 +5,7 @@ from pyfolioanalytics.moments import clean_returns_boudt
 def test_boudt_cleaning():
     # 1. Generate normal multivariate data
     np.random.seed(42)
-    T, N = 100, 3
+    T, _N = 100, 3
     mean = np.array([0.001, 0.002, 0.003])
     cov = np.array([[0.01, 0.005, 0.002],
                     [0.005, 0.015, 0.004],

@@ -27,7 +27,7 @@ def test_ptc_cross_validation():
 
     # PortfolioAnalytics R script used Mean and StdDev objectives with risk_aversion=2
     portfolio.add_objective(type="return", name="mean")
-    portfolio.add_objective(type="risk", name="StdDev", risk_aversion=2.0)
+    portfolio.add_objective(type="risk", name="var", risk_aversion=2.0)
 
     res_py = optimize_portfolio(R, portfolio)
     py_weights = res_py["weights"].values

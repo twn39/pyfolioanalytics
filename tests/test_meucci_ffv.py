@@ -87,7 +87,7 @@ def test_meucci_entropy_pooling_convergence_warning():
     """Verify that entropy pooling returns prior when optimization fails."""
     np.random.seed(42)
     T = 50
-    R = np.random.randn(T, 2)
+    np.random.randn(T, 2)
     prior_probs = np.full(T, 1.0 / T)
 
     # Infeasible views: sum(p)=1 and sum(p)=2

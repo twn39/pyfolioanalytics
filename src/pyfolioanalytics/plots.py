@@ -647,7 +647,6 @@ def plot_return_histogram(
     at the specified significance level alpha.
     """
     import plotly.figure_factory as ff
-    from .risk import CVaR
     
     # Drop NaNs
     rets = returns.dropna()

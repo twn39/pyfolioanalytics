@@ -302,7 +302,10 @@ def backtest_portfolio(
 
         # First day of the period pays the turnover cost
         turnover_array[0] = turnover_val
-        
+
+        # Record NAV before rebalance to capture PTC drop
+        nav_pre_rebal = nav
+
         # Deduct PTC from NAV immediately on rebalance
         nav *= (1.0 - turnover_val * ptc)
 
@@ -316,11 +319,14 @@ def backtest_portfolio(
             # Portfolio Gross Return for the day
             r_p = np.dot(w, R_vals[t])
             port_ret_array[t] = r_p
-            
-            nav_prev = nav
+
+            if t == 0:
+                nav_prev = nav_pre_rebal
+            else:
+                nav_prev = nav
+
             # 1. Market Movement
-            nav *= (1.0 + r_p)
-            
+            nav *= (1.0 + r_p)            
             # 2. Accrue Daily Management Fee
             if management_fee > 0:
                 nav *= (1.0 - daily_mgt_fee_rate)

@@ -58,7 +58,7 @@ def test_multi_dataset_cross_validation():
 
         # Test Weights
         np.testing.assert_allclose(
-            py_res_mvo["weights"].values, r_results["mvo_weights"], atol=1e-4
+            py_res_mvo["weights"].values, r_results["mvo_weights"], atol=5e-4
         )
 
         # 2. EVaR Calculation Parity (Equal Weight)

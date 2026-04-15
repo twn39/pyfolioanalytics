@@ -1,11 +1,10 @@
 import numpy as np
-import pandas as pd
 from pyfolioanalytics.plots import plot_factor_risk_decomposition
 from pyfolioanalytics.risk import factor_risk_decomposition
 
 def test_plot_factor_risk_decomposition():
     # Setup dummy data
-    N, K = 5, 2
+    _N, K = 5, 2
     weights = np.array([0.2, 0.2, 0.2, 0.2, 0.2])
     
     # Factor loadings (B)

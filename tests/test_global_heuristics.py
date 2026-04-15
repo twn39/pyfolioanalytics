@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.optimize import optimize_portfolio
 

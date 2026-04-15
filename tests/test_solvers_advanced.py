@@ -39,7 +39,7 @@ def test_solve_deoptim_smoke():
     # Compare with equal weight
     eq_w = np.full(N, 1.0 / N)
     sigma = moments["sigma"]
-    eq_risk = np.sqrt(eq_w.T @ sigma @ eq_w)
+    np.sqrt(eq_w.T @ sigma @ eq_w)
     opt_risk = np.sqrt(w.T @ sigma @ w)
 
     # Ensure it minimizes risk compared to a badly weighted portfolio

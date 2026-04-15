@@ -1,6 +1,4 @@
-import pytest
 import numpy as np
-import pandas as pd
 import riskfolio as rp
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.moments import set_portfolio_moments
