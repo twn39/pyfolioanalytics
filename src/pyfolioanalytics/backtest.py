@@ -192,14 +192,14 @@ def backtest_portfolio(
     **kwargs,
 ) -> BacktestResult:
     """
-    Simple walk-forward backtest with rebalancing, including weight drift,
+    Walk-forward backtest with rebalancing, including vectorized weight drift,
     turnover calculation, and proportional transaction costs (PTC).
-    Also supports AUM-based fees (Management Fee and Performance Fee with High Water Mark).
+    Also supports AUM-based fees (Management Fee and Performance Fee with High Water Mark)
+    and R-style training_period/rolling_window logic.
     """
-    # AUM-based Fee parameters
     initial_aum = kwargs.get("initial_aum", 1.0)
-    management_fee = kwargs.get("management_fee", 0.0)  # Annualized, e.g., 0.02 for 2%
-    performance_fee = kwargs.get("performance_fee", 0.0)  # E.g., 0.20 for 20%
+    management_fee = kwargs.get("management_fee", 0.0)
+    performance_fee = kwargs.get("performance_fee", 0.0)
     
     # Handle rebalance_on from PortfolioAnalytics style
     rebalance_on = kwargs.get("rebalance_on")
@@ -213,18 +213,30 @@ def backtest_portfolio(
         }
         rebalance_periods = mapping.get(rebalance_on, rebalance_periods)
 
-    # Ensure R index is datetime
     if not isinstance(R.index, pd.DatetimeIndex):
         R.index = pd.to_datetime(R.index)
 
-    # Identify rebalancing dates
-    rebal_dates = pd.date_range(
-        start=R.index[0], end=R.index[-1], freq=rebalance_periods
-    )
-    if rebal_dates[0] > R.index[0]:
-        rebal_dates = rebal_dates.insert(0, R.index[0])
-
+    # R PortfolioAnalytics logic for training_period and rolling_window
+    training_period = kwargs.get("training_period", 0)
     rolling_window = kwargs.get("rolling_window")
+
+    # The first possible rebalance date must be at least `training_period` observations into the dataset
+    if training_period > 0 and len(R) > training_period:
+        valid_start_date = R.index[training_period]
+    else:
+        valid_start_date = R.index[0]
+
+    # Identify all potential rebalancing dates
+    raw_rebal_dates = pd.date_range(start=R.index[0], end=R.index[-1], freq=rebalance_periods)
+    
+    # Filter dates to respect training_period and ensure we cover the very end
+    rebal_dates = raw_rebal_dates[raw_rebal_dates >= valid_start_date]
+    if len(rebal_dates) == 0 or rebal_dates[0] > valid_start_date:
+        rebal_dates = rebal_dates.insert(0, valid_start_date)
+    if rebal_dates[-1] < R.index[-1]:
+        # Add a dummy end date that goes just past the end of the data to capture the last slice
+        rebal_dates = rebal_dates.insert(len(rebal_dates), R.index[-1] + pd.Timedelta(days=1))
+
     regimes = kwargs.get("regimes")
 
     all_bop_weights = []
@@ -237,30 +249,31 @@ def backtest_portfolio(
     current_weights = pd.Series(1.0 / len(R.columns), index=R.columns)
     last_eop_weights = pd.Series(0.0, index=R.columns)
 
-    # State variables for AUM-based fee calculation
     nav = initial_aum
     hwm = initial_aum
-    # Assuming 252 trading days per year for daily management fee accrual
     daily_mgt_fee_rate = management_fee / 252.0
 
     for i in range(len(rebal_dates) - 1):
         start_date = rebal_dates[i]
         end_date = rebal_dates[i + 1]
 
-        # Data for optimization
-        if rolling_window:
-            # Find integer index of start_date
-            loc = R.index.get_indexer([start_date], method="pad")[0]
-            start_idx = max(0, loc - rolling_window)
+        # Extract strict half-open interval [start_date, end_date) to prevent overlapping days
+        R_period = R.loc[(R.index >= start_date) & (R.index < end_date)]
+        if R_period.empty:
+            continue
+
+        # Data for optimization (Strictly before start_date to prevent lookahead bias)
+        loc = R.index.get_indexer([start_date], method="bfill")[0]
+        if rolling_window and loc >= rolling_window:
+            start_idx = loc - rolling_window
             R_train = R.iloc[start_idx:loc]
         else:
-            # Strict less-than prevents rebalance-date return leaking into training
-            R_train = R.loc[R.index < start_date]
+            # If rolling_window is None or not enough history, use expanding window
+            R_train = R.iloc[:loc]
 
         if len(R_train) >= 2:
             if isinstance(portfolio, RegimePortfolio):
                 if regimes is not None:
-                    # Use the regime of the current rebalance date
                     current_regime = regimes.asof(start_date)
                     active_portfolio = portfolio.get_portfolio(current_regime)
                 else:
@@ -279,86 +292,82 @@ def backtest_portfolio(
                     "portfolio": active_portfolio,
                     "status": res["status"],
                 }
-                # Ensure moments and other metadata are passed through if present
                 if "moments" in res:
                     opt_info["moments"] = res["moments"]
                 all_opt_results.append(opt_info)
 
-        # Apply weights to the period
-        R_period = R[start_date:end_date]
-        if R_period.empty:
-            continue
-
-        # 1. Calculate Turnover at rebalance date (start_date)
-        # Sum of absolute changes between target current_weights and last end-of-period weights
+        # 1. Turnover at rebalance
         turnover_val = np.abs(current_weights - last_eop_weights).sum() / 2.0
-
-        # 2. Calculate Drift and Exact NAV trajectory
-        bop_weights_matrix = np.zeros(R_period.shape)
-        eop_weights_matrix = np.zeros(R_period.shape)
-        port_ret_array = np.zeros(len(R_period))
-        net_ret_array = np.zeros(len(R_period))
-        turnover_array = np.zeros(len(R_period))
-
-        # First day of the period pays the turnover cost
-        turnover_array[0] = turnover_val
-
-        # Record NAV before rebalance to capture PTC drop
-        nav_pre_rebal = nav
-
-        # Deduct PTC from NAV immediately on rebalance
-        nav *= (1.0 - turnover_val * ptc)
-
-        w = current_weights.values
+        
+        # 2. Vectorized Drift and NAV Calculation
+        T, N = R_period.shape
         R_vals = R_period.values
-
-        for t in range(len(R_period)):
-            # Beginning of period weights
-            bop_weights_matrix[t, :] = w
-
-            # Portfolio Gross Return for the day
-            r_p = np.dot(w, R_vals[t])
-            port_ret_array[t] = r_p
-
-            if t == 0:
-                nav_prev = nav_pre_rebal
-            else:
-                nav_prev = nav
-
-            # 1. Market Movement
-            nav *= (1.0 + r_p)            
-            # 2. Accrue Daily Management Fee
-            if management_fee > 0:
-                nav *= (1.0 - daily_mgt_fee_rate)
+        w = current_weights.values
+        
+        # Calculate daily growth factor for each asset: (1 + R_i,t)
+        asset_growth = 1.0 + R_vals
+        
+        # Cumulative growth of each asset over the period
+        cum_asset_growth = np.cumprod(asset_growth, axis=0)
+        
+        # Value of each asset over time, assuming we start with $w allocation
+        value_matrix = w.reshape(1, N) * cum_asset_growth
+        
+        # Total portfolio value over time (relative to starting $1)
+        port_rel_value = np.sum(value_matrix, axis=1)
+        
+        # EOP Weights = current value of asset / total portfolio value
+        eop_weights_matrix = value_matrix / port_rel_value.reshape(-1, 1)
+        
+        # BOP Weights: first day is target `w`, subsequent days are previous day's EOP
+        bop_weights_matrix = np.zeros_like(eop_weights_matrix)
+        bop_weights_matrix[0, :] = w
+        if T > 1:
+            bop_weights_matrix[1:, :] = eop_weights_matrix[:-1, :]
             
-            # 3. Performance Fee (assessed at the end of each rebalance period)
-            # In standard industry practice, performance fee is crystalized monthly/quarterly (at rebalance)
-            if performance_fee > 0 and t == len(R_period) - 1:
-                if nav > hwm:
-                    perf_fee_amount = (nav - hwm) * performance_fee
-                    nav -= perf_fee_amount
-                    hwm = nav  # Update high water mark
+        # Portfolio Gross Returns: V_t / V_{t-1} - 1
+        port_ret_array = np.zeros(T)
+        port_ret_array[0] = np.dot(w, R_vals[0])
+        if T > 1:
+            port_ret_array[1:] = (port_rel_value[1:] / port_rel_value[:-1]) - 1.0
             
-            # Exact Net Return inferred from NAV change
-            # Note: For the very first day of backtest, this incorporates the initial turnover PTC
-            net_ret_array[t] = (nav / nav_prev) - 1.0
+        # NAV and Net Returns tracking
+        net_ret_array = np.zeros(T)
+        turnover_array = np.zeros(T)
+        turnover_array[0] = turnover_val
+        
+        # Vectorized NAV calculation
+        # The portfolio grows by port_ret_array each day, and shrinks by daily_mgt_fee_rate
+        # For the first day, we must apply the turnover PTC drop BEFORE market growth
+        nav_trajectory = np.zeros(T)
+        
+        nav_after_ptc = nav * (1.0 - turnover_val * ptc)
+        nav_trajectory[0] = nav_after_ptc * (1.0 + port_ret_array[0]) * (1.0 - daily_mgt_fee_rate)
+        
+        # Cumulative compounding for the rest of the period
+        if T > 1:
+            net_daily_growth = (1.0 + port_ret_array[1:]) * (1.0 - daily_mgt_fee_rate)
+            nav_trajectory[1:] = nav_trajectory[0] * np.cumprod(net_daily_growth)
+            
+        # Apply Performance Fee on the last day of the period
+        if performance_fee > 0:
+            final_nav = nav_trajectory[-1]
+            if final_nav > hwm:
+                perf_fee_amount = (final_nav - hwm) * performance_fee
+                nav_trajectory[-1] -= perf_fee_amount
+                hwm = nav_trajectory[-1]
+                
+        # Calculate Net Returns
+        net_ret_array[0] = (nav_trajectory[0] / nav) - 1.0
+        if T > 1:
+            net_ret_array[1:] = (nav_trajectory[1:] / nav_trajectory[:-1]) - 1.0
+            
+        # Update state for next period
+        nav = nav_trajectory[-1]
+        last_eop_weights = pd.Series(eop_weights_matrix[-1, :], index=R.columns)
 
-            # End of period weights (drift)
-            # w_{t+1} = w_t * (1 + R_t) / (1 + R_p)
-            w_next = w * (1 + R_vals[t])
-            sum_w = np.sum(w_next)
-            if sum_w > 0:
-                w = w_next / sum_w
-            eop_weights_matrix[t, :] = w
-
-        last_eop_weights = pd.Series(w, index=R.columns)
-
-        all_bop_weights.append(
-            pd.DataFrame(bop_weights_matrix, index=R_period.index, columns=R.columns)
-        )
-        all_eop_weights.append(
-            pd.DataFrame(eop_weights_matrix, index=R_period.index, columns=R.columns)
-        )
+        all_bop_weights.append(pd.DataFrame(bop_weights_matrix, index=R_period.index, columns=R.columns))
+        all_eop_weights.append(pd.DataFrame(eop_weights_matrix, index=R_period.index, columns=R.columns))
         all_returns.append(pd.Series(port_ret_array, index=R_period.index))
         all_net_returns.append(pd.Series(net_ret_array, index=R_period.index))
         all_turnover.append(pd.Series(turnover_array, index=R_period.index))
@@ -366,25 +375,12 @@ def backtest_portfolio(
     if not all_bop_weights:
         return BacktestResult(pd.DataFrame(), pd.Series(), [])
 
-    # Filter out duplicate dates at period boundaries
-    # rebal_dates chunks might overlap on end_date/start_date depending on indexing.
-    # R[start_date:end_date] is inclusive on both sides in pandas for datetime slices.
-    # To avoid double counting the boundary days, we should drop duplicates.
-
+    # Concatenate all periods (No overlaps due to half-open intervals!)
     full_weights = pd.concat(all_bop_weights)
     full_eop = pd.concat(all_eop_weights)
     full_returns = pd.concat(all_returns)
     full_net_returns = pd.concat(all_net_returns)
     full_turnover = pd.concat(all_turnover)
-
-    # Remove duplicates, keeping the first occurrence (which would be the rebalance day with new weights)
-    full_weights = full_weights[~full_weights.index.duplicated(keep="first")]
-    full_eop = full_eop[~full_eop.index.duplicated(keep="first")]
-    full_returns = full_returns[~full_returns.index.duplicated(keep="first")]
-    full_net_returns = full_net_returns[
-        ~full_net_returns.index.duplicated(keep="first")
-    ]
-    full_turnover = full_turnover[~full_turnover.index.duplicated(keep="first")]
 
     return BacktestResult(
         weights=full_weights,

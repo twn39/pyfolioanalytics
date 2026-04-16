@@ -444,29 +444,102 @@ def solve_global_heuristic(
 
     def objective_fn(w):
         measures = calculate_objective_measures(w, moments, objectives, R=R)
-        total_score = 0.0
+        out = 0.0
+        PENALTY = 1e4
+        TOLERANCE = 1.49e-8  # Approx .Machine$double.eps^0.5
+
         for obj in objectives:
             if not obj.get("enabled", True):
                 continue
             mult = obj.get("multiplier", 1.0)
-            val = measures.get(obj["name"], 0.0)
-            total_score += val * mult
-            if obj["type"] == "risk_budget":
+            
+            # (1) Return Objective
+            if obj["type"] == "return":
+                val = measures.get(obj["name"], 0.0)
+                if "target" in obj and obj["target"] is not None:
+                    out += PENALTY * abs(mult) * abs(val - obj["target"])
+                out += mult * val
+                
+            # (2) Risk / Turnover Objective
+            elif obj["type"] in ["risk", "turnover"]:
+                val = measures.get(obj["name"], 0.0)
+                if "target" in obj and obj["target"] is not None:
+                    out += PENALTY * abs(mult) * abs(val - obj["target"])
+                out += abs(mult) * val  # R uses abs() for risk multipliers
+                
+            # (3) Risk Budget Objective
+            elif obj["type"] == "risk_budget":
                 rc_name = f"pct_contrib_{obj['name']}"
                 if rc_name in measures:
-                    pct_rc = measures[rc_name]
-                    if obj.get("min_concentration") or obj.get("min_difference"):
-                        target = np.full(n, 1.0 / n)
-                        total_score += 1e4 * np.sum((pct_rc - target) ** 2)
+                    pct_rc = measures[rc_name] * 100.0  # R uses percentages (0-100)
+                    # min/max risk budget limits
+                    if "max_prisk" in obj and obj["max_prisk"] is not None:
+                        violations = np.maximum(0, pct_rc - obj["max_prisk"])
+                        out += PENALTY * mult * np.sum(violations)
+                    if "min_prisk" in obj and obj["min_prisk"] is not None:
+                        violations = np.maximum(0, obj["min_prisk"] - pct_rc)
+                        out += PENALTY * mult * np.sum(violations)
                         
-        # Hard penalties for algorithms that do not support linear constraints directly
-        sum_w = np.sum(w)
-        if sum_w < constraints["min_sum"] - 1e-4:
-            total_score += 1e5 * (constraints["min_sum"] - sum_w)
-        elif sum_w > constraints["max_sum"] + 1e-4:
-            total_score += 1e5 * (sum_w - constraints["max_sum"])
+                    # Concentration
+                    if obj.get("min_difference"):
+                        max_diff = np.sqrt(np.sum((pct_rc / 100.0)**2))
+                        out += PENALTY * mult * max_diff
+                    if obj.get("min_concentration"):
+                        act_hhi = np.sum((pct_rc / 100.0)**2)
+                        min_hhi = np.sum(np.full(n, 1.0/n)**2)
+                        out += PENALTY * mult * abs(act_hhi - min_hhi)
             
-        return total_score
+            # (4) Weight Concentration Objective (HHI)
+            elif obj["type"] == "weight_concentration":
+                hhi = np.sum(w**2)
+                conc_aversion = obj.get("conc_aversion", 0.0)
+                if isinstance(conc_aversion, (int, float)):
+                    out += PENALTY * conc_aversion * hhi
+                else:
+                    # Array of aversions for group HHI (not fully implemented yet)
+                    pass
+
+        # --- Evaluate Constraints (Penalties) ---
+        
+        # (1) Weight Sum
+        sum_w = np.sum(w)
+        if "max_sum" in constraints and constraints["max_sum"] is not None:
+            if sum_w > constraints["max_sum"]:
+                out += PENALTY * (sum_w - constraints["max_sum"])
+        if "min_sum" in constraints and constraints["min_sum"] is not None:
+            if sum_w < constraints["min_sum"]:
+                out += PENALTY * (constraints["min_sum"] - sum_w)
+                
+        # (2) Position Limit Constraint
+        max_pos = constraints.get("max_pos")
+        if max_pos is not None:
+            nzassets = np.sum(np.abs(w) > TOLERANCE)
+            if nzassets > max_pos:
+                out += PENALTY * (nzassets - max_pos)
+                
+        # (3) Turnover Constraint
+        turnover_target = constraints.get("turnover_target")
+        w_init = constraints.get("weight_initial")
+        if turnover_target is not None and w_init is not None:
+            to = np.sum(np.abs(w - w_init))
+            # R penalizes if it exceeds +/- 5% of target
+            if to < turnover_target * 0.95 or to > turnover_target * 1.05:
+                out += PENALTY * abs(to - turnover_target)
+                
+        # (4) Transaction Cost
+        ptc = constraints.get("ptc")
+        if ptc is not None and w_init is not None:
+            tc = np.sum(np.abs(w - w_init) * ptc)
+            out += tc  # R does NOT multiply by PENALTY for transaction costs, just mult=1
+            
+        # (5) Leverage Constraint
+        leverage = constraints.get("leverage")
+        if leverage is not None:
+            lev_w = np.sum(np.abs(w))
+            if lev_w > leverage:
+                out += (PENALTY / 100.0) * abs(lev_w - leverage)
+
+        return out
 
     max_iter = kwargs.get("itermax", 100)
 
