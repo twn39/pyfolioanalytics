@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Validation](https://img.shields.io/badge/Validation-R%20Parity%20Check-orange.svg)](tests/)
+[![PyPI version](https://img.shields.io/pypi/v/pyfolioanalytics.svg)](https://pypi.org/project/pyfolioanalytics/)
 
 **PyFolioAnalytics** 是 R 语言顶级组合优化库 [PortfolioAnalytics](https://github.com/braverock/PortfolioAnalytics) 的高保真 Python 实现。本项目不仅完美复刻了 R 语言的声明式定义和优化逻辑，还整合了 `Riskfolio-Lib` 和 `PyPortfolioOpt` 中的现代量化特性，通过严苛的 $10^{-7}$ 精度交叉验证，为量化研究提供生产级的数学保障。
 
