@@ -69,13 +69,14 @@
 
 欢迎查阅模块化的详细开发与使用文档（包含核心数学原理说明及丰富的代码示例）：
 
-0. **[构建与验证量化投资组合的标准流程](docs/workflow.md)** - 强烈建议初学者阅读！
-1. [组合规格定义 (Portfolio Specification)](docs/portfolio_specification.md) - `portfolio.py`
-2. [参数与矩估计 (Parameter Estimation)](docs/parameter_estimation.md) - `moments.py`, `rmt.py`
-3. [风险度量与测度 (Risk Measures)](docs/risk_measures.md) - `risk.py`
-4. [核心优化引擎 (Optimization Engine)](docs/optimization.md) - `optimize.py`, `solvers.py`
-5. [机器学习与图论配置 (Machine Learning)](docs/machine_learning.md) - `ml.py`, `dbht.py`
-6. [回测与可视化 (Backtesting & Plots)](docs/backtest_and_plots.md) - `backtest.py`, `plots.py`
+0. **[构建与验证量化投资组合的标准流程](docs/workflow.md)** - 强烈建议初学者阅读，涵盖从参数估计到滚动回测的完整量化流水线！
+1. **[快速入门指南 (Quickstart)](docs/tutorial_1_quickstart.md)** - 5 分钟上手构建你的第一个均值-方差最优投资组合。
+2. **[组合规格定义 (Portfolio Specification)](docs/portfolio_specification.md)** - 详解如何使用 `portfolio.py` 声明复杂的业务约束（如多空、杠杆、换手率、风险预算等）。
+3. **[参数与矩估计 (Parameter Estimation)](docs/parameter_estimation.md)** - 探讨 `moments.py` 与 `rmt.py` 中的高阶统计矩估计技术（去噪、收缩、Black-Litterman 等）。
+4. **[风险度量与测度 (Risk Measures)](docs/risk_measures.md)** - 深入 `risk.py`，了解 VaR、CVaR、CDaR、OWA 等前沿稳健风险度量的数学定义与应用。
+5. **[核心优化引擎 (Optimization Engine)](docs/optimization.md)** - 解析 `optimize.py` 与 `solvers.py` 如何将你的声明转化为 CVXPY 凸优化或启发式问题并极速求解。
+6. **[机器学习与图论配置 (Machine Learning)](docs/machine_learning.md)** - 指导如何使用 `ml.py` 和 `dbht.py` 构建基于网络拓扑和层次聚类的现代投资组合（如 HRP, HERC）。
+7. **[回测与可视化 (Backtesting & Plots)](docs/backtest_and_plots.md)** - 使用 `backtest.py` 引擎进行带费率的滚动回测，并使用 `plots.py` 生成专业的交互式风险归因图表。
 
 ---
 
