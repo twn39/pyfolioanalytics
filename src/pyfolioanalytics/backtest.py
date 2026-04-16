@@ -317,7 +317,9 @@ def backtest_portfolio(
         port_rel_value = np.sum(value_matrix, axis=1)
         
         # EOP Weights = current value of asset / total portfolio value
-        eop_weights_matrix = value_matrix / port_rel_value.reshape(-1, 1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            eop_weights_matrix = value_matrix / port_rel_value.reshape(-1, 1)
+            eop_weights_matrix[port_rel_value == 0] = 0.0
         
         # BOP Weights: first day is target `w`, subsequent days are previous day's EOP
         bop_weights_matrix = np.zeros_like(eop_weights_matrix)
@@ -329,7 +331,9 @@ def backtest_portfolio(
         port_ret_array = np.zeros(T)
         port_ret_array[0] = np.dot(w, R_vals[0])
         if T > 1:
-            port_ret_array[1:] = (port_rel_value[1:] / port_rel_value[:-1]) - 1.0
+            with np.errstate(divide='ignore', invalid='ignore'):
+                port_ret_array[1:] = (port_rel_value[1:] / port_rel_value[:-1]) - 1.0
+            port_ret_array[1:][port_rel_value[:-1] == 0] = 0.0
             
         # NAV and Net Returns tracking
         net_ret_array = np.zeros(T)
@@ -360,7 +364,9 @@ def backtest_portfolio(
         # Calculate Net Returns
         net_ret_array[0] = (nav_trajectory[0] / nav) - 1.0
         if T > 1:
-            net_ret_array[1:] = (nav_trajectory[1:] / nav_trajectory[:-1]) - 1.0
+            with np.errstate(divide='ignore', invalid='ignore'):
+                net_ret_array[1:] = (nav_trajectory[1:] / nav_trajectory[:-1]) - 1.0
+            net_ret_array[1:][nav_trajectory[:-1] == 0] = 0.0
             
         # Update state for next period
         nav = nav_trajectory[-1]

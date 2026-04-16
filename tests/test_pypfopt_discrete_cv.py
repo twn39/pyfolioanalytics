@@ -37,7 +37,7 @@ def test_discrete_allocation_shorts_parity():
     # Setup inputs with shorts
     weights = {"AAPL": 1.2, "GOOG": -0.2}
     latest_prices = pd.Series({"AAPL": 150.0, "GOOG": 2800.0})
-    total_val = 10000.0
+    total_val = 20000.0
 
     pa_da = PA_DA(weights, latest_prices, total_portfolio_value=total_val)
     pa_alloc, pa_leftover = pa_da.greedy_portfolio()
