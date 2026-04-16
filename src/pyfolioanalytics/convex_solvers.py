@@ -172,8 +172,8 @@ class ConvexOptimizer:
             
         solver = self.kwargs.get("solver")
         solver_kwargs = self.kwargs.get("solver_kwargs", {"verbose": False})
-        # Default fallback solvers order: CLARABEL (modern interior point, highly stable), ECOS, SCS (good for exponential cones but lower precision)
-        fallback_solvers = [cp.CLARABEL, cp.ECOS, cp.SCS]
+        # Default fallback solvers order: CLARABEL (modern interior point, highly stable), OSQP, SCS (good for exponential cones but lower precision)
+        fallback_solvers = [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "OSQP", "OSQP"), getattr(cp, "SCS", "SCS")]
         
         # 1. If user explicitly specified a solver
         if solver is not None:

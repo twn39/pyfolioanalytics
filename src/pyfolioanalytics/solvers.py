@@ -6,6 +6,113 @@ import pandas as pd
 from scipy.optimize import differential_evolution, minimize
 
 
+def create_penalized_objective(
+    moments: dict,
+    constraints: dict,
+    objectives: list,
+    R=None
+):
+    from .optimize import calculate_objective_measures
+    n = len(moments["mu"])
+    
+    def objective_fn(w):
+        measures = calculate_objective_measures(w, moments, objectives, R=R)
+        out = 0.0
+        PENALTY = 1e4
+        TOLERANCE = 1.49e-8  # Approx .Machine$double.eps^0.5
+
+        for obj in objectives:
+            if not obj.get("enabled", True):
+                continue
+            mult = obj.get("multiplier", 1.0)
+            
+            # (1) Return Objective
+            if obj["type"] == "return":
+                val = measures.get(obj["name"], 0.0)
+                if "target" in obj and obj["target"] is not None:
+                    out += PENALTY * abs(mult) * abs(val - obj["target"])
+                out += mult * val
+                
+            # (2) Risk / Turnover Objective
+            elif obj["type"] in ["risk", "turnover"]:
+                val = measures.get(obj["name"], 0.0)
+                if "target" in obj and obj["target"] is not None:
+                    out += PENALTY * abs(mult) * abs(val - obj["target"])
+                out += abs(mult) * val  # R uses abs() for risk multipliers
+                
+            # (3) Risk Budget Objective
+            elif obj["type"] == "risk_budget":
+                rc_name = f"pct_contrib_{obj['name']}"
+                if rc_name in measures:
+                    pct_rc = measures[rc_name] * 100.0  # R uses percentages (0-100)
+                    # min/max risk budget limits
+                    if "max_prisk" in obj and obj["max_prisk"] is not None:
+                        violations = np.maximum(0, pct_rc - obj["max_prisk"])
+                        out += PENALTY * mult * np.sum(violations)
+                    if "min_prisk" in obj and obj["min_prisk"] is not None:
+                        violations = np.maximum(0, obj["min_prisk"] - pct_rc)
+                        out += PENALTY * mult * np.sum(violations)
+                        
+                    # Concentration
+                    if obj.get("min_difference"):
+                        max_diff = np.sqrt(np.sum((pct_rc / 100.0)**2))
+                        out += PENALTY * mult * max_diff
+                    if obj.get("min_concentration"):
+                        act_hhi = np.sum((pct_rc / 100.0)**2)
+                        min_hhi = np.sum(np.full(n, 1.0/n)**2)
+                        out += PENALTY * mult * abs(act_hhi - min_hhi)
+            
+            # (4) Weight Concentration Objective (HHI)
+            elif obj["type"] == "weight_concentration":
+                hhi = np.sum(w**2)
+                conc_aversion = obj.get("conc_aversion", 0.0)
+                if isinstance(conc_aversion, (int, float)):
+                    out += PENALTY * conc_aversion * hhi
+
+        # --- Evaluate Constraints (Penalties) ---
+        
+        # (1) Weight Sum
+        sum_w = np.sum(w)
+        if "max_sum" in constraints and constraints["max_sum"] is not None:
+            if sum_w > constraints["max_sum"]:
+                out += PENALTY * (sum_w - constraints["max_sum"])
+        if "min_sum" in constraints and constraints["min_sum"] is not None:
+            if sum_w < constraints["min_sum"]:
+                out += PENALTY * (constraints["min_sum"] - sum_w)
+                
+        # (2) Position Limit Constraint
+        max_pos = constraints.get("max_pos")
+        if max_pos is not None:
+            nzassets = np.sum(np.abs(w) > TOLERANCE)
+            if nzassets > max_pos:
+                out += PENALTY * (nzassets - max_pos)
+                
+        # (3) Turnover Constraint
+        turnover_target = constraints.get("turnover_target")
+        w_init = constraints.get("weight_initial")
+        if turnover_target is not None and w_init is not None:
+            to = np.sum(np.abs(w - w_init))
+            # R penalizes if it exceeds +/- 5% of target
+            if to < turnover_target * 0.95 or to > turnover_target * 1.05:
+                out += PENALTY * abs(to - turnover_target)
+                
+        # (4) Transaction Cost
+        ptc = constraints.get("ptc")
+        if ptc is not None and w_init is not None:
+            tc = np.sum(np.abs(w - w_init) * ptc)
+            out += tc  # R does NOT multiply by PENALTY for transaction costs, just mult=1
+            
+        # (5) Leverage Constraint
+        leverage = constraints.get("leverage")
+        if leverage is not None:
+            lev_w = np.sum(np.abs(w))
+            if lev_w > leverage:
+                out += (PENALTY / 100.0) * abs(lev_w - leverage)
+
+        return out
+        
+    return objective_fn
+
 def _apply_linear_constraints(cp_constraints, w, constraints):
     if "linear_A" in constraints and "linear_b" in constraints:
         for A, b in zip(constraints["linear_A"], constraints["linear_b"]):
@@ -13,297 +120,6 @@ def _apply_linear_constraints(cp_constraints, w, constraints):
     if "linear_A_eq" in constraints and "linear_b_eq" in constraints:
         for A_eq, b_eq in zip(constraints["linear_A_eq"], constraints["linear_b_eq"]):
             cp_constraints.append(A_eq @ w == b_eq)
-
-
-def solve_mvo(
-    moments: dict[str, Any],
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    n = len(moments["mu"])
-    w = cp.Variable(n)
-    mu = moments["mu"].flatten()
-    sigma = moments["sigma"]
-    asset_names = list(constraints["min"].index)
-
-    # 1. Handle Robustness (Worst-case Mu)
-    delta_mu = constraints.get("delta_mu")
-    mu_robust = mu
-    robust_mu_type = constraints.get("robust_mu_type", "box")
-
-    if delta_mu is not None:
-        if robust_mu_type == "box":
-            if np.all(constraints["min"].values >= 0):
-                mu_robust = mu - delta_mu.values
-            else:
-                mu_robust = mu
-        elif robust_mu_type == "ellipsoidal":
-            # Return objective will be w @ mu - k * ||G @ w||_2
-            # where G is Cholesky factor of sigma_mu (uncertainty of mu)
-            k_mu = constraints.get("k_mu", 1.0)
-            sigma_mu = constraints.get("sigma_mu")
-            if sigma_mu is not None:
-                G_mu = np.linalg.cholesky(sigma_mu).T
-                mu_robust = mu  # Base mu
-                # We will add penalty term later in objective
-            else:
-                robust_mu_type = "box"  # Fallback
-
-    # 2. Base constraints
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-
-    # Factor Exposure Constraint
-    B = constraints.get("B")
-    if B is not None:
-        lower = constraints.get("lower")
-        upper = constraints.get("upper")
-        # B is N x K, w is N x 1 => B.T @ w is K x 1
-        cp_constraints.append(B.T @ w >= lower)
-        cp_constraints.append(B.T @ w <= upper)
-
-    # Leverage Exposure Constraint
-    leverage_limit = constraints.get("leverage")
-    if leverage_limit is not None:
-        cp_constraints.append(cp.norm(w, 1) <= leverage_limit)
-
-    # Diversification (HHI) Constraint
-    div_target = constraints.get("div_target")
-    if div_target is not None:
-        # Diversification = 1 - sum(w^2) >= div_target
-        # sum(w^2) <= 1 - div_target
-        cp_constraints.append(cp.sum_squares(w) <= 1.0 - div_target)
-
-    # Return Constraint
-    min_return = constraints.get("min_return")
-    if min_return is not None:
-        cp_constraints.append(w @ mu_robust >= min_return)
-
-    # Position Limits
-    max_pos = constraints.get("max_pos")
-    if max_pos is not None:
-        z = cp.Variable(n, boolean=True)
-        W_max = np.maximum(1.0, constraints["max"].values)
-        cp_constraints.append(w <= cp.multiply(z, W_max))
-        cp_constraints.append(cp.sum(z) <= max_pos)
-
-    # Group Constraints
-    if constraints.get("groups") is not None:
-        groups = constraints["groups"]
-        group_min = constraints["group_min"]
-        group_max = constraints["group_max"]
-        for i, group in enumerate(groups):
-            indices = [
-                asset_names.index(item) if isinstance(item, str) else item
-                for item in group
-            ]
-            if group_min is not None:
-                cp_constraints.append(cp.sum(w[indices]) >= group_min[i])
-            if group_max is not None:
-                cp_constraints.append(cp.sum(w[indices]) <= group_max[i])
-
-    # Tracking Error Constraint
-    te_target = constraints.get("target")
-    te_benchmark = constraints.get("benchmark")
-    if te_target is not None and te_benchmark is not None:
-        # TE = sqrt((w - w_b)' * Sigma * (w - w_b)) <= target
-        # For convex optimization, we use (w - w_b)' * Sigma * (w - w_b) <= target^2
-        w_b = te_benchmark
-        if isinstance(w_b, dict):
-            w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
-        elif isinstance(w_b, pd.Series):
-            w_b = w_b.reindex(asset_names, fill_value=0.0).values
-
-        diff = w - w_b
-        # We can use quad_form or norm if we take Cholesky
-        # PortfolioAnalytics usually treats target as StdDev target
-        cp_constraints.append(cp.quad_form(diff, sigma) <= te_target**2)
-
-    # Active Share Constraint
-    as_target = constraints.get("active_share_target")
-    as_benchmark = constraints.get("active_share_benchmark")
-    if as_target is not None and as_benchmark is not None:
-        # AS = 0.5 * sum(|w - w_b|) <= target
-        w_b = as_benchmark
-        if isinstance(w_b, dict):
-            w_b = np.array([w_b.get(name, 0.0) for name in asset_names])
-        elif isinstance(w_b, pd.Series):
-            w_b = w_b.reindex(asset_names, fill_value=0.0).values
-
-        # AS constraint
-        cp_constraints.append(0.5 * cp.norm(w - w_b, 1) <= as_target)
-
-    # Turnover/TC
-    w_init = constraints.get("weight_initial")
-    ptc = constraints.get("ptc")
-    tc_penalty = 0
-    if w_init is not None:
-        if constraints.get("turnover_target") is not None:
-            cp_constraints.append(
-                cp.sum(cp.abs(w - w_init)) <= constraints["turnover_target"]
-            )
-        if ptc is not None:
-            tc_penalty = cp.sum(cp.multiply(cp.abs(w - w_init), ptc))
-
-    # Apply custom linear constraints
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    # Objectives
-    return_obj = next(
-        (o for o in objectives if o["type"] in ["return", "return_objective"]), None
-    )
-    risk_obj = next(
-        (o for o in objectives if o["type"] in ["risk", "portfolio_risk_objective"]),
-        None,
-    )
-
-    # Uncertainty terms
-    ret_uncertainty = 0
-    if robust_mu_type == "ellipsoidal" and delta_mu is not None:
-        sigma_mu = constraints.get("sigma_mu")
-        if sigma_mu is not None:
-            k_mu = constraints.get("k_mu", 1.0)
-            G_mu = np.linalg.cholesky(sigma_mu).T
-            ret_uncertainty = k_mu * cp.norm(G_mu @ w)
-
-    robust_sigma_type = constraints.get("robust_sigma_type", "none")
-    risk_uncertainty = 0
-    if robust_sigma_type == "ellipsoidal":
-        # Robust Risk: Tr(Sigma * (W + E)) + k_sigma * sigma_risk
-        # where [W w; w' k] >> 0 and E >= 0
-        sigma_sigma = constraints.get("sigma_sigma")
-        if sigma_sigma is not None:
-            k_sigma = constraints.get("k_sigma", 1.0)
-            G_sigma = np.linalg.cholesky(sigma_sigma).T
-
-            W = cp.Variable((n, n), symmetric=True)
-            E = cp.Variable((n, n), symmetric=True)
-            sigma_risk = cp.Variable()
-
-            # Conic constraints for robustness
-            # PortfolioAnalytics/Optimisers.jl approach:
-            # || G_sigma * vec(W + E) ||_2 <= sigma_risk
-            cp_constraints.append(
-                cp.norm(G_sigma @ cp.vec(W + E, order="C")) <= sigma_risk
-            )
-            cp_constraints.append(E >> 0)
-
-            # [W w; w' 1] >> 0 (using 1 since we assume k=1 for non-ratio)
-            # This is equivalent to W >> w @ w'
-            L = cp.vstack(
-                [
-                    cp.hstack([W, cp.reshape(w, (n, 1), order="C")]),
-                    cp.hstack([cp.reshape(w, (1, n), order="C"), np.array([[1.0]])]),
-                ]
-            )
-            cp_constraints.append(L >> 0)
-
-            risk_uncertainty = cp.trace(sigma @ (W + E)) + k_sigma * sigma_risk
-            # Override standard risk term if robust
-            risk_term = risk_uncertainty
-        else:
-            risk_term = cp.quad_form(w, sigma)
-    else:
-        risk_term = cp.quad_form(w, sigma)
-
-    if min_return is not None:
-        prob = cp.Problem(cp.Minimize(risk_term + tc_penalty), cp_constraints)
-    elif return_obj and risk_obj:
-        risk_aversion = risk_obj.get("risk_aversion", 1.0)
-        # Utility: 0.5 * lambda * risk_term - (mu'w - penalty)
-        prob = cp.Problem(
-            cp.Minimize(
-                0.5 * risk_aversion * risk_term
-                - (w @ mu_robust - ret_uncertainty)
-                + tc_penalty
-            ),
-            cp_constraints,
-        )
-    elif risk_obj:
-        prob = cp.Problem(cp.Minimize(risk_term + tc_penalty), cp_constraints)
-    elif return_obj:
-        mult = return_obj.get("multiplier", -1.0)
-        if mult < 0:
-            prob = cp.Problem(
-                cp.Minimize(-(w @ mu_robust - ret_uncertainty) + tc_penalty),
-                cp_constraints,
-            )
-        else:
-            prob = cp.Problem(
-                cp.Minimize((w @ mu_robust - ret_uncertainty) + tc_penalty),
-                cp_constraints,
-            )
-    else:
-        prob = cp.Problem(
-            cp.Minimize(cp.quad_form(w, sigma) + tc_penalty), cp_constraints
-        )
-
-    try:
-        if max_pos is not None:
-            prob.solve(solver=cp.SCIP, verbose=False)
-        else:
-            prob.solve(verbose=False)
-    except Exception:
-        prob.solve(verbose=False)
-
-    if prob.status not in ["optimal", "feasible"]:
-        return {"status": prob.status, "weights": None}
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
-
-
-def solve_evar(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-    t = cp.Variable()
-    z = cp.Variable(nonneg=True)
-
-    evar_obj_conf = next((o for o in objectives if o["name"] == "EVaR"), None)
-    p = evar_obj_conf.get("arguments", {}).get("p", 0.95) if evar_obj_conf else 0.95
-    alpha = 1 - p
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    objective = cp.Minimize(
-        t
-        + z
-        * (
-            cp.log_sum_exp(cp.hstack([(-R[i] @ w - t) for i in range(T)]) / z)
-            - np.log(T * alpha)
-        )
-    )
-
-    try:
-        prob = cp.Problem(objective, cp_constraints)
-        prob.solve(verbose=False)
-    except Exception:
-        return {"status": "failed", "weights": None}
-
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
 
 
 def solve_nonlinear(
@@ -317,70 +133,7 @@ def solve_nonlinear(
     mu = moments["mu"].flatten()
     R = kwargs.get("R")
 
-    def objective_fn(w: np.ndarray) -> float:
-        if np.sum(w) == 0:
-            return 1e10
-        out = 0.0
-        for obj in objectives:
-            if not obj.get("enabled", True):
-                continue
-            mult = obj.get("multiplier", 1.0)
-            name = obj["name"]
-            if name == "mean":
-                out += mult * np.dot(w, mu)
-            elif name in ["var", "StdDev"]:
-                p_var = np.dot(w.T, np.dot(sigma, w))
-                val = p_var if name == "var" else np.sqrt(p_var)
-                out += mult * val
-            if obj["type"] == "risk_budget":
-                if name in ["StdDev", "Variance"]:
-                    p_var = float(np.dot(w.T, np.dot(sigma, w)))
-                    if p_var <= 1e-14:
-                        return 1e10
-                    rc = w * np.dot(sigma, w) / p_var
-                    penalty_scale = 1.0 / p_var
-                else:
-                    if R is None:
-                        raise ValueError(
-                            f"Historical returns R must be provided for alternative risk parity using {name}"
-                        )
-                    import pyfolioanalytics.risk as pr
-
-                    from .risk import numerical_risk_contribution
-
-                    func = getattr(pr, name, None)
-                    if not func:
-                        raise ValueError(
-                            f"Unsupported alternative risk measure: {name}"
-                        )
-
-                    obj_args = obj.get("arguments", {})
-                    # Calculate numerical risk contribution
-                    rc_abs = numerical_risk_contribution(w, R, func, **obj_args)
-                    sum_rc = np.sum(rc_abs)
-                    if sum_rc <= 1e-14:
-                        return 1e10
-                    rc = rc_abs / sum_rc
-                    penalty_scale = 1e4  # Scale up for non-variance measures to enforce strict penalty
-
-                if obj.get("min_concentration") or obj.get("min_difference"):
-                    target = np.full(n, 1.0 / n)
-                    out += penalty_scale * np.sum((rc - target) ** 2)
-                elif obj.get("max_prisk") is not None:
-                    max_p = np.array(obj["max_prisk"])
-                    out += penalty_scale * np.sum(np.maximum(0, rc - max_p) ** 2)
-            if name == "EVaR" and R is not None:
-                from .risk import EVaR
-
-                out += mult * EVaR(w, R, p=obj.get("arguments", {}).get("p", 0.95))
-                
-        max_pos = constraints.get("max_pos")
-        if max_pos is not None:
-            num_pos = np.sum(w > 1e-4)
-            if num_pos > max_pos:
-                out += 1e6 * (num_pos - max_pos)
-
-        return out
+    objective_fn = create_penalized_objective(moments, constraints, objectives, R=R)
 
     cons = []
     if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-8:
@@ -442,104 +195,7 @@ def solve_global_heuristic(
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
     R = kwargs.get("R")
 
-    def objective_fn(w):
-        measures = calculate_objective_measures(w, moments, objectives, R=R)
-        out = 0.0
-        PENALTY = 1e4
-        TOLERANCE = 1.49e-8  # Approx .Machine$double.eps^0.5
-
-        for obj in objectives:
-            if not obj.get("enabled", True):
-                continue
-            mult = obj.get("multiplier", 1.0)
-            
-            # (1) Return Objective
-            if obj["type"] == "return":
-                val = measures.get(obj["name"], 0.0)
-                if "target" in obj and obj["target"] is not None:
-                    out += PENALTY * abs(mult) * abs(val - obj["target"])
-                out += mult * val
-                
-            # (2) Risk / Turnover Objective
-            elif obj["type"] in ["risk", "turnover"]:
-                val = measures.get(obj["name"], 0.0)
-                if "target" in obj and obj["target"] is not None:
-                    out += PENALTY * abs(mult) * abs(val - obj["target"])
-                out += abs(mult) * val  # R uses abs() for risk multipliers
-                
-            # (3) Risk Budget Objective
-            elif obj["type"] == "risk_budget":
-                rc_name = f"pct_contrib_{obj['name']}"
-                if rc_name in measures:
-                    pct_rc = measures[rc_name] * 100.0  # R uses percentages (0-100)
-                    # min/max risk budget limits
-                    if "max_prisk" in obj and obj["max_prisk"] is not None:
-                        violations = np.maximum(0, pct_rc - obj["max_prisk"])
-                        out += PENALTY * mult * np.sum(violations)
-                    if "min_prisk" in obj and obj["min_prisk"] is not None:
-                        violations = np.maximum(0, obj["min_prisk"] - pct_rc)
-                        out += PENALTY * mult * np.sum(violations)
-                        
-                    # Concentration
-                    if obj.get("min_difference"):
-                        max_diff = np.sqrt(np.sum((pct_rc / 100.0)**2))
-                        out += PENALTY * mult * max_diff
-                    if obj.get("min_concentration"):
-                        act_hhi = np.sum((pct_rc / 100.0)**2)
-                        min_hhi = np.sum(np.full(n, 1.0/n)**2)
-                        out += PENALTY * mult * abs(act_hhi - min_hhi)
-            
-            # (4) Weight Concentration Objective (HHI)
-            elif obj["type"] == "weight_concentration":
-                hhi = np.sum(w**2)
-                conc_aversion = obj.get("conc_aversion", 0.0)
-                if isinstance(conc_aversion, (int, float)):
-                    out += PENALTY * conc_aversion * hhi
-                else:
-                    # Array of aversions for group HHI (not fully implemented yet)
-                    pass
-
-        # --- Evaluate Constraints (Penalties) ---
-        
-        # (1) Weight Sum
-        sum_w = np.sum(w)
-        if "max_sum" in constraints and constraints["max_sum"] is not None:
-            if sum_w > constraints["max_sum"]:
-                out += PENALTY * (sum_w - constraints["max_sum"])
-        if "min_sum" in constraints and constraints["min_sum"] is not None:
-            if sum_w < constraints["min_sum"]:
-                out += PENALTY * (constraints["min_sum"] - sum_w)
-                
-        # (2) Position Limit Constraint
-        max_pos = constraints.get("max_pos")
-        if max_pos is not None:
-            nzassets = np.sum(np.abs(w) > TOLERANCE)
-            if nzassets > max_pos:
-                out += PENALTY * (nzassets - max_pos)
-                
-        # (3) Turnover Constraint
-        turnover_target = constraints.get("turnover_target")
-        w_init = constraints.get("weight_initial")
-        if turnover_target is not None and w_init is not None:
-            to = np.sum(np.abs(w - w_init))
-            # R penalizes if it exceeds +/- 5% of target
-            if to < turnover_target * 0.95 or to > turnover_target * 1.05:
-                out += PENALTY * abs(to - turnover_target)
-                
-        # (4) Transaction Cost
-        ptc = constraints.get("ptc")
-        if ptc is not None and w_init is not None:
-            tc = np.sum(np.abs(w - w_init) * ptc)
-            out += tc  # R does NOT multiply by PENALTY for transaction costs, just mult=1
-            
-        # (5) Leverage Constraint
-        leverage = constraints.get("leverage")
-        if leverage is not None:
-            lev_w = np.sum(np.abs(w))
-            if lev_w > leverage:
-                out += (PENALTY / 100.0) * abs(lev_w - leverage)
-
-        return out
+    objective_fn = create_penalized_objective(moments, constraints, objectives, R=R)
 
     max_iter = kwargs.get("itermax", 100)
 
@@ -639,376 +295,6 @@ def solve_mdiv(
     return {"status": "failed", "weights": None}
 
 
-def solve_owa(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    owa_obj_config = next((o for o in objectives if o["name"] == "OWA"), None)
-    if not owa_obj_config:
-        return {"status": "failed", "message": "OWA objective config not found"}
-
-    owa_weights = owa_obj_config.get("arguments", {}).get("owa_weights")
-    if owa_weights is None:
-        from .risk import owa_gmd_weights
-
-        owa_weights = owa_gmd_weights(T)
-
-    # Ensure owa_weights is length T
-    if len(owa_weights) != T:
-        raise ValueError(f"owa_weights must have length {T}, got {len(owa_weights)}")
-
-    # Sort weights descending for convex risk measure (Standard for sorted losses)
-    if np.any(np.diff(owa_weights) > 1e-12):
-        owa_weights = np.sort(owa_weights)[::-1]
-
-    delta_w = owa_weights[:-1] - owa_weights[1:]
-
-    # Linear programming formulation for OWA
-    if T > 1:
-        zeta = cp.Variable(T - 1)
-        d = cp.Variable((T, T - 1), nonneg=True)
-        losses = -R @ w
-        for k in range(1, T):
-            cp_constraints.append(d[:, k - 1] >= losses - zeta[k - 1])
-
-        top_k_sums = [(k * zeta[k - 1] + cp.sum(d[:, k - 1])) for k in range(1, T)]
-        owa_expr = cp.sum(
-            [delta_w[i] * top_k_sums[i] for i in range(T - 1)]
-        ) + owa_weights[-1] * cp.sum(losses)
-    else:
-        owa_expr = owa_weights[0] * (-R @ w)
-
-    prob = cp.Problem(cp.Minimize(owa_expr), cp_constraints)
-
-    try:
-        prob.solve(verbose=False)
-    except Exception as e:
-        return {"status": "failed", "message": str(e)}
-
-    if prob.status not in ["optimal", "feasible"]:
-        return {"status": prob.status, "weights": None}
-
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
-
-
-def solve_edar(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-    alpha_p = next(
-        (
-            o.get("arguments", {}).get("p", 0.95)
-            for o in objectives
-            if o["name"] == "EDaR"
-        ),
-        0.95,
-    )
-    alpha = 1 - alpha_p
-
-    # Drawdown constraints
-    u = cp.Variable(T + 1)
-    cum_ret = cp.Variable(T + 1)
-    d = cp.Variable(T)
-
-    cp_constraints = []
-    # Portfolio constraints (sum, bounds)
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    cp_constraints.append(cum_ret[0] == 0)
-    cp_constraints.append(u[0] == 0)
-    for t in range(T):
-        cp_constraints.append(cum_ret[t + 1] == cum_ret[t] + R[t] @ w)
-        cp_constraints.append(u[t + 1] >= cum_ret[t + 1])
-        cp_constraints.append(u[t + 1] >= u[t])
-        cp_constraints.append(d[t] == u[t + 1] - cum_ret[t + 1])
-
-    # EVaR applied to d (DCP compliant exponential cone formulation)
-    t_evar = cp.Variable()
-    z_evar = cp.Variable(nonneg=True)
-    ui = cp.Variable(T)
-
-    # Minimize t + z * log(sum(exp((di - t)/z))/(T*alpha))
-    # This is equivalent to minimizing t subject to:
-    # sum(exp((di - t)/z)) <= T * alpha
-    # which is sum(ui) <= T * alpha where ExpCone(di - t, z, ui)
-
-    cp_constraints.append(cp.sum(ui) <= T * alpha * z_evar)
-    for i in range(T):
-        cp_constraints.append(cp.ExpCone(d[i] - t_evar, z_evar, ui[i]))
-
-    prob = cp.Problem(cp.Minimize(t_evar), cp_constraints)
-    try:
-        prob.solve(verbose=False)
-    except Exception as e:
-        return {"status": "failed", "message": str(e)}
-
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
-
-
-def solve_rlvar(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-    obj_config = next((o for o in objectives if o["name"] == "RLVaR"), {})
-    alpha_p = obj_config.get("arguments", {}).get("p", 0.95)
-    kappa = obj_config.get("arguments", {}).get("kappa", 0.3)
-    alpha = 1 - alpha_p
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    # RLVaR primal formulation
-    t = cp.Variable()
-    z = cp.Variable(nonneg=True)
-    psi = cp.Variable(T)
-    theta = cp.Variable(T)
-    epsilon = cp.Variable(T)
-    omega = cp.Variable(T)
-
-    # Scale returns to improve stability
-    scale = 100.0
-    losses = -(R * scale) @ w
-
-    ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
-
-    cp_constraints.append(losses - t + epsilon + omega <= 0)
-
-    # Correct 3D Power Cone application
-    x1 = cp.vstack([z * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
-    y1 = psi * (1 + kappa) / kappa
-    cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
-
-    x2 = omega / (1 - kappa)
-    y2 = theta / kappa
-    z2 = cp.vstack([-z / (2 * kappa)] * T).flatten(order="C")
-    cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
-
-    obj = t + z * ln_k + cp.sum(psi + theta)
-    prob = cp.Problem(cp.Minimize(obj), cp_constraints)
-
-    # Try different solvers
-    try:
-        prob.solve(solver=cp.SCS, verbose=False, eps=1e-5)
-    except Exception:
-        try:
-            prob.solve(solver=cp.CLARABEL, verbose=False)
-        except Exception:
-            prob.solve()
-
-    return {
-        "status": prob.status,
-        "weights": w.value,
-        "obj_value": prob.value / scale if w.value is not None else None,
-    }
-
-
-def solve_mad(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    mu_p = cp.mean(R @ w)
-
-    # MAD linear formulation: min sum(y)/T subject to y >= R@w - mu_p, y >= mu_p - R@w
-    y = cp.Variable(T)
-    cp_constraints.append(y >= R @ w - mu_p)
-    cp_constraints.append(y >= mu_p - R @ w)
-
-    obj = cp.Minimize(cp.sum(y) / T)
-    prob = cp.Problem(obj, cp_constraints)
-
-    try:
-        prob.solve(verbose=False)
-    except Exception:
-        return {"status": "failed", "weights": None}
-
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
-
-
-def solve_semi_mad(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-
-    cp_constraints = []
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    mu_p = cp.mean(R @ w)
-
-    # Semi-MAD linear formulation: min sum(y)/T subject to y >= 0, y >= mu_p - R@w
-    y = cp.Variable(T, nonneg=True)
-    cp_constraints.append(y >= mu_p - R @ w)
-
-    obj = cp.Minimize(cp.sum(y) / T)
-    prob = cp.Problem(obj, cp_constraints)
-
-    try:
-        prob.solve(verbose=False)
-    except Exception:
-        return {"status": "failed", "weights": None}
-
-    return {"status": prob.status, "weights": w.value, "obj_value": prob.value}
-
-
-def solve_rldar(
-    R: np.ndarray,
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    T, n = R.shape
-    w = cp.Variable(n)
-    obj_config = next((o for o in objectives if o["name"] == "RLDaR"), {})
-    alpha_p = obj_config.get("arguments", {}).get("p", 0.95)
-    kappa = obj_config.get("arguments", {}).get("kappa", 0.3)
-    alpha = 1 - alpha_p
-
-    # Scale returns to improve stability
-    scale = 100.0
-
-    cp_constraints = []
-    # Portfolio constraints
-    if abs(constraints["min_sum"] - constraints["max_sum"]) < 1e-10:
-        cp_constraints.append(cp.sum(w) == constraints["min_sum"])
-    else:
-        cp_constraints.append(cp.sum(w) >= constraints["min_sum"])
-        cp_constraints.append(cp.sum(w) <= constraints["max_sum"])
-    cp_constraints.extend(
-        [w >= constraints["min"].values, w <= constraints["max"].values]
-    )
-    _apply_linear_constraints(cp_constraints, w, constraints)
-
-    # Drawdown tracking
-    u = cp.Variable(T + 1)
-    cum_ret = cp.Variable(T + 1)
-    d = cp.Variable(T)
-    cp_constraints.append(cum_ret[0] == 0)
-    cp_constraints.append(u[0] == 0)
-    for t in range(T):
-        cp_constraints.append(cum_ret[t + 1] == cum_ret[t] + (R[t] * scale) @ w)
-        cp_constraints.append(u[t + 1] >= cum_ret[t + 1])
-        cp_constraints.append(u[t + 1] >= u[t])
-        cp_constraints.append(d[t] == u[t + 1] - cum_ret[t + 1])
-
-    # RLVaR primal formulation applied to d
-    t_rlvar = cp.Variable()
-    z_rlvar = cp.Variable(nonneg=True)
-    psi = cp.Variable(T)
-    theta = cp.Variable(T)
-    epsilon = cp.Variable(T)
-    omega = cp.Variable(T)
-
-    ln_k = ((1 / (alpha * T)) ** kappa - (1 / (alpha * T)) ** (-kappa)) / (2 * kappa)
-    cp_constraints.append(d - t_rlvar + epsilon + omega <= 0)
-
-    x1 = cp.vstack([z_rlvar * (1 + kappa) / (2 * kappa)] * T).flatten(order="C")
-    y1 = psi * (1 + kappa) / kappa
-    cp_constraints.append(cp.PowCone3D(x1, y1, epsilon, 1 / (1 + kappa)))
-
-    x2 = omega / (1 - kappa)
-    y2 = theta / kappa
-    z2 = cp.vstack([-z_rlvar / (2 * kappa)] * T).flatten(order="C")
-    cp_constraints.append(cp.PowCone3D(x2, y2, z2, 1 - kappa))
-
-    obj = t_rlvar + z_rlvar * ln_k + cp.sum(psi + theta)
-    prob = cp.Problem(cp.Minimize(obj), cp_constraints)
-
-    try:
-        prob.solve(solver=cp.SCS, eps=1e-5)
-    except Exception:
-        try:
-            prob.solve(solver=cp.CLARABEL)
-        except Exception:
-            prob.solve()
-
-    return {
-        "status": prob.status,
-        "weights": w.value,
-        "obj_value": prob.value / scale if w.value is not None else None,
-    }
-
-
-def solve_portfolio_cvxpy(
-    R: np.ndarray,
-    moments: dict[str, Any],
-    constraints: dict[str, Any],
-    objectives: list[dict[str, Any]],
-    **kwargs,
-) -> dict[str, Any]:
-    """
-    Standard MVO solver using CVXPY.
-    """
-    # Reuse solve_mvo logic
-    return solve_mvo(moments, constraints, objectives, **kwargs)
-
-
 def solve_noc(
     R: np.ndarray,
     moments: dict[str, Any],
@@ -1056,7 +342,8 @@ def solve_noc(
     rt_max = prob_max.value
     rk_max = cp.quad_form(w_max, sigma).value
 
-    res_opt = solve_mvo(moments, constraints, objectives)
+    from .convex_solvers import ConvexOptimizer
+    res_opt = ConvexOptimizer(moments, constraints, objectives).solve()
     if res_opt["status"] not in ["optimal", "feasible"]:
         return {"status": "failed", "weights": None, "message": "Target anchor failed"}
     w_opt = res_opt["weights"]

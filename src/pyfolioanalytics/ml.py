@@ -160,7 +160,7 @@ def herc_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
 
 
 def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
-    from .solvers import solve_mvo
+    from .convex_solvers import ConvexOptimizer
 
     asset_names = R.columns.tolist()
 
@@ -212,7 +212,7 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
         sigma_c = R_c.cov().values
 
         # Simple Min Variance for intra-cluster
-        res = solve_mvo(
+        opt = ConvexOptimizer(
             {"mu": mu_c, "sigma": sigma_c},
             {
                 "min_sum": 1.0,
@@ -222,6 +222,7 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
             },
             [],
         )
+        res = opt.solve()
         if res["weights"] is not None:
             w_intra[c_assets] = res["weights"]
 
@@ -234,7 +235,7 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
     mu_inter = R_inter.mean().values.reshape(-1, 1)
     sigma_inter = R_inter.cov().values
 
-    res_inter = solve_mvo(
+    opt_inter = ConvexOptimizer(
         {"mu": mu_inter, "sigma": sigma_inter},
         {
             "min_sum": 1.0,
@@ -244,6 +245,7 @@ def nco_optimization(R: pd.DataFrame, **kwargs) -> pd.Series:
         },
         [],
     )
+    res_inter = opt_inter.solve()
 
     # 4. Final weights
     w_inter = res_inter["weights"]
