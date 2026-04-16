@@ -43,7 +43,7 @@ w <- Variable(n)
 risk_aversion <- 2
 ptc_val <- 0.01
 
-obj <- Minimize(0.5 * risk_aversion * quad_form(w, sigma) - t(mu) %*% w + sum(abs(w - w_init)) * ptc_val)
+obj <- Minimize(1.0 * risk_aversion * quad_form(w, sigma) - t(mu) %*% w + sum(abs(w - w_init)) * ptc_val)
 constraints <- list(sum(w) == 1, w >= 0)
 prob <- Problem(obj, constraints)
 res <- solve(prob)

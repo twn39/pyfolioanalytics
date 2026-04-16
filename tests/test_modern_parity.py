@@ -63,10 +63,10 @@ def test_socp_robust_parity_manual():
     G_mu = np.linalg.cholesky(sigma_mu).T
 
     # Same as solve_mvo robust logic:
-    # Minimize 0.5 * risk_aversion * w'Sw - (mu'w - k_mu * ||G_mu * w||_2)
+    # Minimize risk_aversion * w'Sw - (mu'w - k_mu * ||G_mu * w||_2)
     risk = cp.quad_form(w, sigma)
     ret_robust = mu @ w - k_mu * cp.norm(G_mu @ w)
-    obj = cp.Minimize(0.5 * 1.0 * risk - ret_robust)
+    obj = cp.Minimize(1.0 * risk - ret_robust)
 
     cons = [cp.sum(w) == 1.0, w >= 0]
     cp.Problem(obj, cons)
@@ -82,7 +82,7 @@ def test_socp_robust_parity_manual():
 
     risk_act = cp.quad_form(w, sigma_act)
     ret_robust_act = mu_act @ w - k_mu * cp.norm(G_mu @ w)
-    prob_act = cp.Problem(cp.Minimize(0.5 * 1.0 * risk_act - ret_robust_act), cons)
+    prob_act = cp.Problem(cp.Minimize(1.0 * risk_act - ret_robust_act), cons)
     prob_act.solve()
 
     w_manual = w.value

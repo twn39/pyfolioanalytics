@@ -252,6 +252,148 @@ def semi_covariance(R: np.ndarray, benchmark: float = 0.0) -> np.ndarray:
     return (R_down.T @ R_down) / T
 
 
+def ema_returns(R: pd.DataFrame, span: int = 252) -> np.ndarray:
+    """
+    Calculate the exponentially-weighted mean of historical returns.
+    """
+    ewm_mean = R.ewm(span=span).mean().iloc[-1]
+    return ewm_mean.values.reshape(-1, 1)
+
+
+def capm_returns(
+    R: pd.DataFrame,
+    market_returns: pd.Series | None = None,
+    market_caps: pd.Series | dict[str, float] | None = None,
+    risk_free_rate: float = 0.0,
+) -> np.ndarray:
+    """
+    Calculate the expected returns based on the Capital Asset Pricing Model (CAPM).
+    Matches PyPfOpt's capm_return logic strictly.
+    """
+    returns = R.copy()
+    
+    if market_returns is not None:
+        if isinstance(market_returns, pd.DataFrame):
+            market_returns = market_returns.iloc[:, 0]
+    else:
+        # Construct proxy for market
+        if market_caps is not None:
+            mc = pd.Series(market_caps)
+            mc = mc.reindex(R.columns).fillna(0.0)
+            if mc.sum() > 0:
+                weights = mc / mc.sum()
+            else:
+                weights = pd.Series(1.0 / len(R.columns), index=R.columns)
+            market_returns = R.dot(weights)
+        else:
+            market_returns = R.mean(axis=1)
+
+    returns["mkt"] = market_returns
+    cov = returns.cov()
+    
+    # Beta = Cov(R_i, R_m) / Var(R_m)
+    if cov.loc["mkt", "mkt"] > 0:
+        betas = cov["mkt"] / cov.loc["mkt", "mkt"]
+    else:
+        betas = pd.Series(0.0, index=returns.columns)
+        
+    betas = betas.drop("mkt")
+
+    # Assuming daily returns, compounding to match PyPfOpt's annualized mkt_mean_ret logic
+    # BUT we want to return raw scale to match PyFolioAnalytics API. We use raw means.
+    # PyPfOpt allows toggling compounding. We'll stick to raw mean.
+    mkt_mean_ret = (1 + returns["mkt"]).prod() ** (1.0 / returns["mkt"].count()) - 1.0
+    
+    # Expected return = Rf + Beta * (E[Rm] - Rf)
+    expected_returns = risk_free_rate + betas * (mkt_mean_ret - risk_free_rate)
+    
+    return expected_returns.values.reshape(-1, 1)
+
+
+def shrunk_covariance(
+    R: pd.DataFrame, 
+    method: str = "ledoit_wolf", 
+    shrinkage_target: str = "constant_variance"
+) -> np.ndarray:
+    """
+    Native implementation of advanced covariance shrinkage (Ledoit-Wolf & OAS).
+    """
+    from sklearn.covariance import LedoitWolf, OAS
+    
+    X = np.nan_to_num(R.values)
+    t, n = X.shape
+
+    if method == "oas":
+        oas = OAS(assume_centered=False).fit(X)
+        return oas.covariance_
+        
+    elif method == "ledoit_wolf":
+        if shrinkage_target == "constant_variance":
+            # Scikit-learn's default implementation
+            lw = LedoitWolf(assume_centered=False).fit(X)
+            return lw.covariance_
+            
+        elif shrinkage_target == "constant_correlation":
+            # Native implementation matching Ledoit & Wolf (2003) / PyPfOpt
+            S = np.cov(X, rowvar=False)
+            
+            var = np.diag(S).reshape(-1, 1)
+            std = np.sqrt(var)
+            _var = np.tile(var, (n,))
+            _std = np.tile(std, (n,))
+            
+            with np.errstate(divide='ignore', invalid='ignore'):
+                cor_mat = S / (_std * _std.T)
+                cor_mat[np.isnan(cor_mat) | np.isinf(cor_mat)] = 0.0
+                
+            r_bar = (np.sum(cor_mat) - n) / (n * (n - 1)) if n > 1 else 1.0
+            
+            F = r_bar * (_std * _std.T)
+            F[np.eye(n) == 1] = var.reshape(-1)
+            
+            Xm = X - X.mean(axis=0)
+            y = Xm**2
+            
+            # Estimate pi
+            pi_mat = np.dot(y.T, y) / t - 2 * np.dot(Xm.T, Xm) * S / t + S**2
+            pi_hat = np.sum(pi_mat)
+            
+            # Theta matrix, expanded term by term
+            term1 = np.dot((Xm**3).T, Xm) / t
+            help_ = np.dot(Xm.T, Xm) / t
+            help_diag = np.diag(help_)
+            term2 = np.tile(help_diag, (n, 1)).T * S
+            term3 = help_ * _var
+            term4 = _var * S
+            
+            theta_mat = term1 - term2 - term3 + term4
+            theta_mat[np.eye(n) == 1] = np.zeros(n)
+            
+            with np.errstate(divide='ignore', invalid='ignore'):
+                inv_std = np.where(std > 1e-10, 1.0 / std, 0.0)
+                
+            rho_hat = np.sum(np.diag(pi_mat)) + r_bar * np.sum(
+                np.dot(inv_std, std.T) * theta_mat
+            )
+            
+            # Estimate gamma
+            gamma_hat = np.linalg.norm(S - F, "fro") ** 2
+            
+            # Compute shrinkage constant
+            if gamma_hat < 1e-10:
+                delta = 0.0
+            else:
+                kappa_hat = (pi_hat - rho_hat) / gamma_hat
+                delta = max(0.0, min(1.0, kappa_hat / t))
+                
+            return delta * F + (1.0 - delta) * S
+            
+        else:
+            raise ValueError(f"Unknown shrinkage target: {shrinkage_target}")
+    else:
+        raise ValueError(f"Unknown shrinkage method: {method}")
+
+
 def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, Any]:
     """
     Constant Conditional Correlation (CCC) GARCH Moment Model.
@@ -335,160 +477,113 @@ def set_portfolio_moments(
         alpha = kwargs.get("clean_alpha", 0.05)
         R_filtered = pd.DataFrame(clean_returns_boudt(R_filtered, alpha=alpha), columns=R_filtered.columns, index=R_filtered.index)
 
-    if method == "sample":
-        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+    # Resolve covariance and expected return methods
+    sigma_method = kwargs.get("sigma_method", method)
+    mu_method = kwargs.get("mu_method", method)
+
+    # 1. Covariance Matrix Estimation
+    if sigma_method == "sample":
         moments["sigma"] = R_filtered.cov().values
-    elif method == "factor_model":
+    elif sigma_method == "factor_model":
         k = kwargs.get("k", 3)
         fm = statistical_factor_model(R_filtered, k=k)
-        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
         moments["sigma"] = factor_model_covariance(fm)
-    elif method == "ac_ranking":
-        order = kwargs.get("order")
-        if order is None:
-            raise ValueError("Method 'ac_ranking' requires an 'order' argument.")
-        moments["mu"] = ac_ranking(R_filtered, order).reshape(-1, 1)
-        moments["sigma"] = R_filtered.cov().values
-    elif method == "black_litterman":
-        from .black_litterman import black_litterman
-
+    elif sigma_method == "shrinkage" or sigma_method == "ledoit_wolf" or sigma_method == "oas":
+        target = kwargs.get("shrinkage_target", "constant_variance")
+        # Handle legacy "shrinkage" method mappings
+        if sigma_method == "shrinkage":
+            if target == "identity":
+                target = "constant_variance"
+            method_arg = "oas" if target == "oas" else "ledoit_wolf"
+        else:
+            method_arg = sigma_method
+        
+        moments["sigma"] = shrunk_covariance(R_filtered, method=method_arg, shrinkage_target=target)
+    elif sigma_method == "robust" or sigma_method == "mcd":
+        from sklearn.covariance import MinCovDet
+        mcd = MinCovDet(random_state=42).fit(R_filtered.values)
+        moments["sigma"] = mcd.covariance_
+        # MCD also robustly estimates the mean
+        if kwargs.get("mu_method") is None and (method == "mcd" or method == "robust"):
+            moments["mu"] = mcd.location_.reshape(-1, 1)
+    elif sigma_method == "denoised":
+        from .rmt import denoise_covariance
+        T, N = R_filtered.shape
+        q = T / N
         sigma = R_filtered.cov().values
-        w_mkt = kwargs.get(
-            "w_mkt", np.full((len(asset_names), 1), 1.0 / len(asset_names))
+        moments["sigma"] = denoise_covariance(
+            sigma, q, method=kwargs.get("denoise_method", "fixed")
         )
-        from typing import cast
-
-        P = cast(np.ndarray, kwargs.get("P"))
-        q = cast(np.ndarray, kwargs.get("q"))
+    elif sigma_method == "garch":
+        garch_res = ccc_garch_moments(R_filtered.values)
+        moments["sigma"] = garch_res["sigma"]
+        if kwargs.get("mu_method") is None and method == "garch":
+            moments["mu"] = garch_res["mu"]
+    elif sigma_method == "ewma":
+        span = kwargs.get("span", 36)
+        res_ewma = ewma_moments(R_filtered.values, span=span)
+        moments["sigma"] = res_ewma["sigma"]
+        if kwargs.get("mu_method") is None and method == "ewma":
+            moments["mu"] = res_ewma["mu"]
+    elif sigma_method == "semi_covariance":
+        benchmark = kwargs.get("benchmark", 0.0)
+        moments["sigma"] = semi_covariance(R_filtered.values, benchmark=benchmark)
+    elif sigma_method == "black_litterman":
+        from .black_litterman import black_litterman
+        sigma = R_filtered.cov().values
+        w_mkt = kwargs.get("w_mkt", np.full((len(asset_names), 1), 1.0 / len(asset_names)))
+        P = kwargs.get("P")
+        q = kwargs.get("q")
         tau = kwargs.get("tau", 0.05)
         risk_aversion = kwargs.get("risk_aversion", 2.5)
         res_bl = black_litterman(sigma, w_mkt, P, q, tau, risk_aversion)
-        moments["mu"] = res_bl["mu"]
         moments["sigma"] = res_bl["sigma"]
-    elif method == "shrinkage":
-        from sklearn.covariance import OAS, LedoitWolf
-
-        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-        target = kwargs.get("shrinkage_target", "identity")
-
-        if target == "identity":
-            lw = LedoitWolf().fit(R_filtered.values)
-            moments["sigma"] = lw.covariance_
-        elif target == "oas":
-            oas = OAS().fit(R_filtered.values)
-            moments["sigma"] = oas.covariance_
-        elif target == "constant_correlation":
-            # Ledoit-Wolf shrinkage towards constant correlation
-            # Equivalent to R's RiskPortfolios::covMcd or Riskfolio-Lib's cov_ledoit
-            X = R_filtered.values
-            T, N = X.shape
-
-            # De-mean returns
-            Y = X - np.mean(X, axis=0)
-
-            # Sample covariance matrix (T-1)
-            S = np.cov(X, rowvar=False)
-
-            # Sample correlation matrix
-            std = np.sqrt(np.diag(S))
-            Corr = S / np.outer(std, std)
-
-            # Mean correlation
-            r_bar = (np.sum(Corr) - N) / (N * (N - 1))
-
-            # Target matrix F
-            F = r_bar * np.outer(std, std)
-            np.fill_diagonal(F, np.diag(S))
-
-            # Estimate Pi_mat (asymptotic variance of sample covariance)
-            # Y is TxN
-            # We need cov(y_it * y_jt) ->
-            # Pi is sum_t [ (Y_it Y_jt - S_ij)^2 ] / T
-
-            Pi_mat = np.zeros((N, N))
-            for i in range(N):
-                for j in range(N):
-                    Pi_mat[i, j] = np.sum((Y[:, i] * Y[:, j] - S[i, j]) ** 2) / T
-
-            pi_hat = np.sum(Pi_mat)
-
-            # Estimate Rho
-            term1 = np.sum(np.diag(Pi_mat))
-            term2 = 0.0
-
-            for i in range(N):
-                for j in range(N):
-                    if i != j:
-                        term2 += (r_bar / 2) * (
-                            np.sqrt(S[j, j] / S[i, i])
-                            * np.sum(
-                                (Y[:, i] ** 2 * Y[:, j] - S[i, i] * S[i, j])
-                                * (Y[:, i] * Y[:, j] - S[i, j])
-                            )
-                            / T
-                            + np.sqrt(S[i, i] / S[j, j])
-                            * np.sum(
-                                (Y[:, j] ** 2 * Y[:, i] - S[j, j] * S[i, j])
-                                * (Y[:, i] * Y[:, j] - S[i, j])
-                            )
-                            / T
-                        ) - r_bar * np.sqrt(S[i, i] * S[j, j]) * Pi_mat[i, j]
-
-            rho_hat = term1 + term2
-
-            # Estimate Gamma
-            gamma_hat = np.sum((S - F) ** 2)
-
-            # Shrinkage intensity
-            kappa_hat = (pi_hat - rho_hat) / gamma_hat
-            delta = max(0.0, min(1.0, kappa_hat / T))
-
-            moments["sigma"] = delta * F + (1 - delta) * S
-        else:
-            raise ValueError(f"Unknown shrinkage target: {target}")
-    elif method == "meucci":
+        if kwargs.get("mu_method") is None and method == "black_litterman":
+            moments["mu"] = res_bl["mu"]
+    elif sigma_method == "meucci":
         from .meucci import entropy_pooling, meucci_moments
-
         T, N = R_filtered.shape
         prior_probs = kwargs.get("prior_probs", np.full(T, 1.0 / T))
         Aeq = kwargs.get("Aeq")
         beq = kwargs.get("beq")
-        # Find posterior probabilities
         p = entropy_pooling(prior_probs, Aeq=Aeq, beq=beq)
-        # Calculate moments
         res_m = meucci_moments(R_filtered.values, p)
-        moments["mu"] = res_m["mu"]
         moments["sigma"] = res_m["sigma"]
-    elif method == "robust":
-        from sklearn.covariance import MinCovDet
-
-        mcd = MinCovDet(random_state=42).fit(R_filtered.values)
-        moments["mu"] = mcd.location_.reshape(-1, 1)
-        moments["sigma"] = mcd.covariance_
-    elif method == "denoised":
-        from .rmt import denoise_covariance
-
-        T, N = R_filtered.shape
-        q = T / N
-        sigma = R_filtered.cov().values
-        denoised_sigma = denoise_covariance(
-            sigma, q, method=kwargs.get("denoise_method", "fixed")
-        )
-        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-        moments["sigma"] = denoised_sigma
-    elif method == "garch":
-        moments = ccc_garch_moments(R_filtered.values)
-    elif method == "ewma":
-        span = kwargs.get("span", 36)
-        res_ewma = ewma_moments(R_filtered.values, span=span)
-        moments["mu"] = res_ewma["mu"]
-        moments["sigma"] = res_ewma["sigma"]
-    elif method == "semi_covariance":
-        benchmark = kwargs.get("benchmark", 0.0)
-        moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-        moments["sigma"] = semi_covariance(R_filtered.values, benchmark=benchmark)
+        if kwargs.get("mu_method") is None and method == "meucci":
+            moments["mu"] = res_m["mu"]
+    elif sigma_method == "ac_ranking":
+        moments["sigma"] = R_filtered.cov().values
     else:
-        raise NotImplementedError(f"Method '{method}' is not implemented.")
+        raise NotImplementedError(f"Covariance method '{sigma_method}' is not implemented.")
+
+    # 2. Expected Returns Estimation
+    if "mu" not in moments or mu_method != method:
+        if mu_method == "sample" or mu_method == "historical" or mu_method == "semi_covariance" or mu_method == "shrinkage" or mu_method == "denoised":
+            moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+        elif mu_method == "ema":
+            span = kwargs.get("ema_span", 252)
+            moments["mu"] = ema_returns(R_filtered, span=span)
+        elif mu_method == "capm":
+            moments["mu"] = capm_returns(
+                R_filtered, 
+                market_returns=kwargs.get("market_returns"),
+                market_caps=kwargs.get("market_caps"),
+                risk_free_rate=kwargs.get("risk_free_rate", 0.0)
+            )
+        elif mu_method == "ac_ranking":
+            order = kwargs.get("order")
+            if order is None:
+                raise ValueError("Method 'ac_ranking' requires an 'order' argument.")
+            moments["mu"] = ac_ranking(R_filtered, order).reshape(-1, 1)
+        elif mu_method == "factor_model":
+            moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+        elif "mu" not in moments:
+             # Ultimate fallback
+             moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+             
+    # Ensure sigma is set if somehow still missing
+    if "sigma" not in moments:
+        moments["sigma"] = R_filtered.cov().values
 
     # Only compute higher-order moments for modified (Cornish-Fisher) VaR/ES,
     # not for Gaussian — avoids O(T·N⁴) work when not needed.

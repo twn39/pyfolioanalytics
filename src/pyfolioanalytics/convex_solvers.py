@@ -263,8 +263,11 @@ class ConvexOptimizer:
                 self.objective_terms.append(risk_term)
             else:
                 # Maximize Return - Risk Penalty
+                # PortfolioAnalytics R logic: Maximize mu'w - lambda * Risk(w)
+                # To minimize, we do: lambda * Risk(w) - (mu'w)
+                # Note: No 0.5 factor here. R expects the user to provide lambda exactly as they want it to scale the risk term.
                 self.objective_terms.append(
-                    0.5 * risk_aversion * risk_term
+                    risk_aversion * risk_term
                     - (self.w @ self.mu_robust - self.ret_uncertainty)
                 )
         elif risk_obj:

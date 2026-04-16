@@ -32,10 +32,9 @@ def test_ptc_cross_validation():
     res_py = optimize_portfolio(R, portfolio)
     py_weights = res_py["weights"].values
 
-    # Check if weights are close to R's ROI solver results
-    # ROI solver might use a slightly different formulation for risk aversion scaling (0.5 * lambda * w'Sw)
-    # Our solvers.py uses: Minimize( 0.5 * risk_aversion * risk_term - (w @ mu) + tc_penalty )
-    # which matches R's standard quadratic utility formulation.
+    # Check if weights are close to R's solver results
+    # Our solver uses: Minimize( risk_aversion * risk_term - (w @ mu) + tc_penalty )
+    # which exactly matches R's standard quadratic utility formulation (no 0.5 factor).
     np.testing.assert_allclose(py_weights, r_weights, atol=1e-4)
 
     # Verify transaction cost calculation in objective_measures
