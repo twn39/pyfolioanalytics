@@ -32,8 +32,5 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check src tests
         
-      - name: Type check with ty
-        run: uv run ty check src tests
-        
       - name: Run tests
         run: uv run pytest

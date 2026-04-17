@@ -2,7 +2,6 @@ from typing import Any
 
 import cvxpy as cp
 import numpy as np
-import pandas as pd
 from scipy.optimize import differential_evolution, minimize
 
 
@@ -129,8 +128,6 @@ def solve_nonlinear(
     **kwargs,
 ) -> dict[str, Any]:
     n = len(moments["mu"])
-    sigma = moments["sigma"]
-    mu = moments["mu"].flatten()
     R = kwargs.get("R")
 
     objective_fn = create_penalized_objective(moments, constraints, objectives, R=R)
@@ -189,7 +186,6 @@ def solve_global_heuristic(
 ) -> dict[str, Any]:
     from scipy.optimize import LinearConstraint, dual_annealing
 
-    from .optimize import calculate_objective_measures
 
     n = len(moments["mu"])
     bounds = list(zip(constraints["min"].values, constraints["max"].values))
