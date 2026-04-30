@@ -529,17 +529,33 @@ def set_portfolio_moments(
         benchmark = kwargs.get("benchmark", 0.0)
         moments["sigma"] = semi_covariance(R_filtered.values, benchmark=benchmark)
     elif sigma_method == "black_litterman":
-        from .black_litterman import black_litterman
-        sigma = R_filtered.cov().values
-        w_mkt = kwargs.get("w_mkt", np.full((len(asset_names), 1), 1.0 / len(asset_names)))
-        P = kwargs.get("P")
-        q = kwargs.get("q")
-        tau = kwargs.get("tau", 0.05)
+        from .black_litterman import black_litterman as _bl
+        # Prior estimation: None → sample (mirrors R's black.litterman() defaults).
+        Mu_prior    = kwargs.get("Mu")     # N-vector or None
+        Sigma_prior = kwargs.get("Sigma")  # N×N or None
+        # View matrix: R default is a single equal-weight row → matrix(rep(1, N), nrow=1)
+        P = kwargs.get(
+            "P", np.ones((1, len(asset_names)))
+        )
+        q            = kwargs.get("q")              # None → sqrt(diag(Omega))
+        Omega        = kwargs.get("Omega")           # None → P Sigma P'
+        formulation  = kwargs.get("bl_formulation", "meucci")
+        tau          = kwargs.get("tau", "auto")    # "auto" → 1/T
         risk_aversion = kwargs.get("risk_aversion", 2.5)
-        res_bl = black_litterman(sigma, w_mkt, P, q, tau, risk_aversion)
+        w_mkt        = kwargs.get("w_mkt")
+        res_bl = _bl(
+            R_filtered.values, P=P, q=q,
+            Mu=Mu_prior, Sigma=Sigma_prior, Omega=Omega,
+            formulation=formulation,
+            tau=tau, risk_aversion=risk_aversion, w_mkt=w_mkt,
+        )
+        # Always write both moments — mirrors R's portfolio.moments.bl which
+        # unconditionally sets BLMu and BLSigma for every objective type.
         moments["sigma"] = res_bl["sigma"]
-        if kwargs.get("mu_method") is None and method == "black_litterman":
-            moments["mu"] = res_bl["mu"]
+        moments["mu"]    = res_bl["mu"].reshape(-1, 1)
+        # Sentinel: prevent the downstream mu-estimation block from
+        # overwriting the BL mu with a plain sample estimate.
+        moments["_bl_moments_set"] = True
     elif sigma_method == "meucci":
         from .meucci import entropy_pooling, meucci_moments
         T, N = R_filtered.shape
@@ -557,7 +573,11 @@ def set_portfolio_moments(
         raise NotImplementedError(f"Covariance method '{sigma_method}' is not implemented.")
 
     # 2. Expected Returns Estimation
-    if "mu" not in moments or mu_method != method:
+    # Guard: skip if BL already wrote mu unconditionally (sentinel prevents
+    # a plain sample estimate from silently overwriting the view-adjusted mu).
+    if not moments.get("_bl_moments_set") and (
+        "mu" not in moments or mu_method != method
+    ):
         if mu_method == "sample" or mu_method == "historical" or mu_method == "semi_covariance" or mu_method == "shrinkage" or mu_method == "denoised":
             moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
         elif mu_method == "ema":
