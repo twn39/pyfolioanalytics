@@ -188,6 +188,30 @@ class Portfolio:
         multiplier: float | None = None,
         **kwargs,
     ):
+        """Add an optimization objective to the portfolio.
+
+        Supported types and their key kwargs:
+          - ``'return'`` / ``'return_objective'``: ``target`` (optional)
+          - ``'risk'`` / ``'portfolio_risk'``: ``target`` (optional)
+          - ``'risk_budget'``: ``min_prisk``, ``max_prisk``,
+            ``min_concentration``, ``min_difference``
+          - ``'turnover'``: ``target`` (optional)
+          - ``'weight_concentration'`` / ``'weight_conc'``:
+
+            - ``conc_aversion`` *(required)* — scalar, or a list of
+              per-group aversion values when ``conc_groups`` is given.
+              A scalar is automatically broadcast to all groups.
+            - ``conc_groups`` *(optional)* — list of index lists that
+              partition (or overlap) the assets into groups.  Indices
+              are **0-based** by default.
+            - ``from_r_index`` *(optional, default False)* — set to
+              ``True`` to automatically convert 1-based R indices in
+              ``conc_groups`` to 0-based Python indices.
+
+          - ``'minmax'``: **``min_val``** and/or **``max_val``** — the
+            objective value must stay inside ``[min_val, max_val]``.  Both
+            bounds are optional (a one-sided range is also valid).
+        """
         if name is None:
             name = type
         if multiplier is None:
@@ -195,7 +219,65 @@ class Portfolio:
                 multiplier = -1.0
             else:
                 multiplier = 1.0
-        obj = {
+
+        # Validate minmax-specific arguments early so the error is obvious.
+        if type in ["minmax", "minmax_objective", "tmp_minmax"]:
+            min_val = kwargs.get("min_val")
+            max_val = kwargs.get("max_val")
+            if min_val is None and max_val is None:
+                raise ValueError(
+                    "'minmax' objective requires at least one of 'min_val' or "
+                    "'max_val' to be specified."
+                )
+            if min_val is not None and max_val is not None and min_val > max_val:
+                raise ValueError(
+                    f"'minmax' objective: min_val ({min_val}) must be <= "
+                    f"max_val ({max_val})."
+                )
+            # Normalise the type to a single canonical string.
+            type = "minmax"
+
+        # Validate and normalise weight_concentration arguments.
+        if type in ["weight_concentration", "weight_conc"]:
+            conc_aversion = kwargs.get("conc_aversion")
+            conc_groups   = kwargs.get("conc_groups")      # list[list[int]] or None
+            from_r_index  = kwargs.get("from_r_index", False)
+
+            if conc_aversion is None:
+                raise ValueError(
+                    "'weight_concentration' objective requires 'conc_aversion'."
+                )
+
+            if conc_groups is not None:
+                # Apply 1-based → 0-based index conversion if requested.
+                if from_r_index:
+                    conc_groups = [[idx - 1 for idx in g] for g in conc_groups]
+
+                n_groups = len(conc_groups)
+                # Broadcast scalar conc_aversion to all groups (mirrors R behaviour).
+                if isinstance(conc_aversion, (int, float)):
+                    conc_aversion = [float(conc_aversion)] * n_groups
+                conc_aversion = list(conc_aversion)
+                if len(conc_aversion) != n_groups:
+                    raise ValueError(
+                        f"'conc_aversion' length ({len(conc_aversion)}) must equal "
+                        f"number of groups ({n_groups})."
+                    )
+            else:
+                if not isinstance(conc_aversion, (int, float)):
+                    raise ValueError(
+                        "'conc_aversion' must be a scalar when 'conc_groups' is None."
+                    )
+                conc_aversion = float(conc_aversion)
+
+            # Write back the normalised values so obj.update(kwargs) picks them up.
+            kwargs["conc_aversion"] = conc_aversion
+            kwargs["conc_groups"]   = conc_groups
+            # Remove the helper flag — it is not needed by downstream code.
+            kwargs.pop("from_r_index", None)
+            type = "weight_concentration"  # normalise alias
+
+        obj: dict[str, Any] = {
             "type": type,
             "name": name,
             "enabled": enabled,
@@ -209,7 +291,6 @@ class Portfolio:
 
     def get_constraints(self) -> dict[str, Any]:
         asset_names = list(self.assets.keys())
-        len(asset_names)
         res: dict[str, Any] = {
             "min_sum": -np.inf,
             "max_sum": np.inf,

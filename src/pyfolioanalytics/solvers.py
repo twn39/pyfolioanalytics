@@ -4,6 +4,8 @@ import cvxpy as cp
 import numpy as np
 from scipy.optimize import differential_evolution, minimize
 
+from .risk import hhi as _hhi
+
 
 def create_penalized_objective(
     moments: dict,
@@ -62,11 +64,57 @@ def create_penalized_objective(
                         out += PENALTY * mult * abs(act_hhi - min_hhi)
             
             # (4) Weight Concentration Objective (HHI)
+            # Mirrors R's constrained_objective.R lines 738-752.
+            #
+            # Path A (no groups): penalty * conc_aversion * HHI_global
+            # Path B (groups)   : penalty * sum(conc_aversion_k * HHI_group_k)
+            #
+            # NOTE: R line 746 has a known bracket-placement bug —
+            #   ``length(x > 1)`` is always 1, so the grouped branch fires
+            #   even for a scalar conc_aversion.  We use the *intended*
+            #   condition ``conc_groups is not None`` instead.
             elif obj["type"] == "weight_concentration":
-                hhi = np.sum(w**2)
                 conc_aversion = obj.get("conc_aversion", 0.0)
-                if isinstance(conc_aversion, (int, float)):
-                    out += PENALTY * conc_aversion * hhi
+                conc_groups   = obj.get("conc_groups")     # list[list[int]] | None
+
+                result = _hhi(w, groups=conc_groups)       # groups already 0-based
+
+                if conc_groups is None:
+                    # Path A: result is a scalar float.
+                    out += PENALTY * float(conc_aversion) * float(result)
+                else:
+                    # Path B: result is {'HHI': float, 'Groups_HHI': ndarray}.
+                    group_hhi = result["Groups_HHI"]
+                    alpha = np.asarray(conc_aversion, dtype=float)
+
+                    if len(alpha) == len(group_hhi):
+                        # Dot product: sum(alpha_k * HHI_group_k)
+                        out += PENALTY * float(np.dot(alpha, group_hhi))
+                    else:
+                        # Dimension mismatch — user configuration error;
+                        # fall back to global HHI with the mean aversion.
+                        import warnings
+                        warnings.warn(
+                            f"weight_concentration: 'conc_aversion' length "
+                            f"({len(alpha)}) != number of groups "
+                            f"({len(group_hhi)}). Falling back to global HHI.",
+                            stacklevel=2,
+                        )
+                        out += PENALTY * float(np.mean(alpha)) * float(result["HHI"])
+
+            # (5) MinMax Objective
+            # Mirrors R's constrained_objective (lines 680-689):
+            # penalise the measure only when it falls outside [min_val, max_val].
+            # Both bounds are optional so a one-sided range is also valid.
+            elif obj["type"] == "minmax":
+                val = measures.get(obj["name"], 0.0)
+                obj_min = obj.get("min_val")
+                obj_max = obj.get("max_val")
+                mult = obj.get("multiplier", 1.0)
+                if obj_min is not None and val < obj_min:
+                    out += PENALTY * mult * (obj_min - val)
+                if obj_max is not None and val > obj_max:
+                    out += PENALTY * mult * (val - obj_max)
 
         # --- Evaluate Constraints (Penalties) ---
         

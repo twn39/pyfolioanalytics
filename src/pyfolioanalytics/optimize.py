@@ -20,6 +20,7 @@ from .risk import (
     RLVaR,
     VaR,
     average_drawdown,
+    hhi,
     max_drawdown,
     owa_gmd_weights,
     owa_l_moment_crm_weights,
@@ -295,15 +296,39 @@ def optimize_portfolio(
                 if pos_count > constraints["max_pos"]:
                     penalty += (pos_count - constraints["max_pos"]) * 1e4
 
-            # Score objective
+            # Score objective — mirrors R's constrained_objective scoring.
             score = penalty
+            RPENALTY = 1e4
             for obj in enabled_objs:
                 mult = obj.get("multiplier", 1.0)
                 val = measures.get(obj["name"], 0.0)
+                obj_type = obj.get("type", "")
                 target = obj.get("target")
-                if target is not None:
-                    # Target penalty: (val - target)^2
-                    score += mult * (val - target) ** 2
+
+                if obj_type == "minmax":
+                    # Penalise only when the value escapes [min_val, max_val].
+                    obj_min = obj.get("min_val")
+                    obj_max = obj.get("max_val")
+                    if obj_min is not None and val < obj_min:
+                        score += RPENALTY * mult * (obj_min - val)
+                    if obj_max is not None and val > obj_max:
+                        score += RPENALTY * mult * (val - obj_max)
+                elif obj_type == "weight_concentration":
+                    # Inline HHI — only weights needed, no moment estimation.
+                    # Groups are already 0-based (normalised in add_objective).
+                    conc_aversion = obj.get("conc_aversion", 0.0)
+                    conc_groups   = obj.get("conc_groups")
+                    result = hhi(w, groups=conc_groups)
+                    if conc_groups is None:
+                        score += RPENALTY * float(conc_aversion) * float(result)
+                    else:
+                        group_hhi_arr = result["Groups_HHI"]
+                        alpha = np.asarray(conc_aversion, dtype=float)
+                        if len(alpha) == len(group_hhi_arr):
+                            score += RPENALTY * float(np.dot(alpha, group_hhi_arr))
+                elif target is not None:
+                    score += RPENALTY * abs(mult) * abs(val - target)
+                    score += mult * val
                 else:
                     score += mult * val
 

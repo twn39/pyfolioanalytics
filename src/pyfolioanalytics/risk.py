@@ -535,3 +535,87 @@ def CVaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     if len(tail_returns) == 0:
         return -var_threshold
     return -np.mean(tail_returns)
+
+
+def hhi(
+    weights: np.ndarray,
+    groups: list[list[int]] | None = None,
+    from_r_index: bool = False,
+) -> float | dict[str, float | np.ndarray]:
+    """Herfindahl-Hirschman Index (HHI) of weight concentration.
+
+    Mirrors R's ``HHI()`` function in ``objectiveFUN.R``.
+
+    The HHI measures portfolio concentration.  A value of ``1/N``
+    (equal-weight) is the minimum; ``1.0`` (fully concentrated) is the
+    maximum.
+
+    Parameters
+    ----------
+    weights:
+        1-D array of portfolio weights.  Need not sum to 1.
+    groups:
+        Optional list of index lists.  Each inner list specifies which
+        asset positions belong to a group.  Indices are **0-based** by
+        default (Python convention).  Pass ``from_r_index=True`` if the
+        indices come from R code and are 1-based.
+    from_r_index:
+        When ``True``, every index in ``groups`` is decremented by 1
+        before use so that R's 1-based indices are converted to Python's
+        0-based indices.  Default ``False``.
+
+    Returns
+    -------
+    float
+        Global HHI ``sum(w ** 2)`` when ``groups`` is ``None``.
+    dict
+        ``{"HHI": float, "Groups_HHI": np.ndarray}`` when groups are
+        given.  The layout matches R's list: ``[[1]]`` → ``"HHI"``,
+        ``[[2]]`` → ``"Groups_HHI"``.  ``Groups_HHI[k]`` is
+        ``sum(w[group_k] ** 2)`` using the **global** (un-normalised)
+        weights, exactly as R does.
+
+    Notes
+    -----
+    **Bug fix vs R**: R's ``constrained_objective.R`` line 746 contains
+    a known bracket-placement bug — ``length(x > 1)`` always evaluates
+    to ``length(TRUE)`` = 1, so the grouped path triggers even when
+    ``conc_aversion`` is a scalar.  This Python implementation uses the
+    *intended* condition (``groups is not None``) rather than replicating
+    the bug.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> w = np.array([0.3, 0.3, 0.2, 0.2])
+    >>> hhi(w)                                  # global HHI
+    0.26
+    >>> result = hhi(w, groups=[[0, 1], [2, 3]])
+    >>> result["HHI"]
+    0.26
+    >>> result["Groups_HHI"]
+    array([0.18, 0.08])
+    """
+    w = np.asarray(weights, dtype=float)
+
+    # ── Convert 1-based R indices to 0-based Python indices ─────────────────
+    if from_r_index and groups is not None:
+        groups = [[idx - 1 for idx in g] for g in groups]
+
+    # ── Global HHI ───────────────────────────────────────────────────────────
+    global_hhi = float(w @ w)  # sum(w^2), identical to R's sum(weights^2)
+
+    if groups is None:
+        return global_hhi
+
+    # ── Per-group HHI ────────────────────────────────────────────────────────
+    # Use global (un-normalised) weights, exactly as R does:
+    #   group_hhi[i] <- sum(weights[groups[[i]]]^2)
+    group_hhi = np.array(
+        [float(w[np.asarray(g, dtype=int)] @ w[np.asarray(g, dtype=int)])
+         for g in groups],
+        dtype=float,
+    )
+
+    return {"HHI": global_hhi, "Groups_HHI": group_hhi}
+
