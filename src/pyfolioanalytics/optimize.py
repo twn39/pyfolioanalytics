@@ -6,7 +6,7 @@ import pandas as pd
 from .convex_solvers import RISK_STRATEGIES, ConvexOptimizer
 from .ml import herc_optimization, hrp_optimization, nco_optimization
 from .moments import set_portfolio_moments
-from .portfolio import Portfolio
+from .portfolio import Portfolio, SubPortfolioConfig
 from .random_portfolios import random_portfolios
 from .risk import (
     ES,
@@ -190,7 +190,11 @@ def optimize_portfolio(
         hasattr(portfolio, "sub_portfolios")
         and len(getattr(portfolio, "sub_portfolios", {})) > 0
     ):
-        return optimize_portfolio_multi_layer(R, portfolio, **kwargs)
+        # Forward optimize_method explicitly so the root portfolio uses it;
+        # before this fix optimize_method was silently dropped here.
+        return optimize_portfolio_multi_layer(
+            R, portfolio, optimize_method=optimize_method, **kwargs
+        )
 
     # 2. Setup Moments
     moment_method = kwargs.get("moment_method", "sample")
@@ -495,34 +499,97 @@ def optimize_portfolio(
 
 
 def optimize_portfolio_multi_layer(
-    R: pd.DataFrame, portfolio: Any, **kwargs
+    R: pd.DataFrame,
+    portfolio: Any,
+    optimize_method: str = "ROI",
+    **kwargs,
 ) -> dict[str, Any]:
-    sub_results = {}
-    sub_returns = {}
-    for meta_asset, sub_port in portfolio.sub_portfolios.items():
-        res = optimize_portfolio(R, sub_port, **kwargs)
-        sub_results[meta_asset] = res
-        # Multiply underlying asset returns by their weights in the sub-portfolio
-        leaf_assets = list(res["weights"].index)
-        sub_returns[meta_asset] = R[leaf_assets] @ res["weights"]
+    """Optimise a multi-layer (hierarchical) portfolio.
 
+    Each sub-portfolio is optimised independently using its own
+    ``optimize_method`` and ``search_size`` as stored in its
+    ``SubPortfolioConfig``.  The resulting proxy returns are fed into the
+    root-level optimisation which uses the ``optimize_method`` supplied to
+    this function (forwarded from the top-level ``optimize_portfolio()``
+    call).
+
+    Parameters
+    ----------
+    R:
+        Full asset returns DataFrame (all leaf assets as columns).
+    portfolio:
+        A ``MultLayerPortfolio`` instance.
+    optimize_method:
+        Optimisation method for the *root* portfolio.  Sub-portfolios use
+        their own per-``SubPortfolioConfig`` method.
+    **kwargs:
+        Additional kwargs passed to the *root* portfolio optimisation only.
+        Sub-portfolio kwargs are configured inside ``add_sub_portfolio()``.
+    """
+    sub_results: dict[str, Any] = {}
+    sub_returns: dict[str, pd.Series] = {}
+
+    for meta_asset, config in portfolio.sub_portfolios.items():
+        # ── Unpack config, supporting legacy bare-Portfolio storage ──────────
+        if isinstance(config, SubPortfolioConfig):
+            sub_port        = config.portfolio
+            sub_method      = config.optimize_method
+            sub_search_size = config.search_size
+            sub_kwargs      = dict(config.kwargs)   # per-sub extra kwargs
+        else:
+            # Legacy: bare Portfolio stored before SubPortfolioConfig existed.
+            sub_port        = config
+            sub_method      = "ROI"
+            sub_search_size = 20_000
+            sub_kwargs      = {}
+
+        # ── Subset R to the assets in this sub-portfolio ─────────────────────
+        # Mirrors R's ``R[,names(tmp$portfolio$assets)]``.
+        # For nested MultLayerPortfolio, use leaf_assets() to resolve the real
+        # (non-virtual) asset names — root.assets contains meta-asset names
+        # that are not columns of R.
+        if hasattr(sub_port, "leaf_assets"):
+            # Nested MultLayerPortfolio: recurse to leaf level.
+            sub_asset_names = sub_port.leaf_assets()
+        else:
+            # Plain Portfolio: assets are real leaf assets.
+            sub_asset_names = list(sub_port.assets.keys())
+        R_sub = R[sub_asset_names]
+
+        # ── Optimise this sub-portfolio with its own independent parameters ──
+        # search_size is mapped to `permutations` (the random-engine kwarg).
+        res = optimize_portfolio(
+            R_sub,
+            sub_port,
+            optimize_method=sub_method,
+            permutations=sub_search_size,   # maps R's search_size → random engine
+            **sub_kwargs,
+        )
+        sub_results[meta_asset] = res
+
+        # Proxy return series = weighted leaf returns of the sub-portfolio.
+        w_sub = res["weights"].reindex(sub_asset_names).fillna(0.0)
+        sub_returns[meta_asset] = R_sub @ w_sub
+
+    # ── Build meta-asset returns DataFrame for the root optimisation ─────────
     meta_R = pd.DataFrame(sub_returns)
     other_assets = [
-        a for a in portfolio.root.assets.keys() if a not in portfolio.sub_portfolios
+        a for a in portfolio.root.assets.keys()
+        if a not in portfolio.sub_portfolios
     ]
     if other_assets:
         meta_R = pd.concat([meta_R, R[other_assets]], axis=1)
 
-    root_res = optimize_portfolio(meta_R, portfolio.root, **kwargs)
+    # ── Optimise root portfolio with the top-level method ────────────────────
+    root_res = optimize_portfolio(
+        meta_R, portfolio.root, optimize_method=optimize_method, **kwargs
+    )
 
-    # final_weights should accumulate weights for all leaf assets found in R
+    # ── Assemble final leaf-level weights ────────────────────────────────────
     final_weights = pd.Series(0.0, index=R.columns)
-    root_weights = root_res["weights"]
-
-    for meta_asset, w_meta in root_weights.items():
+    for meta_asset, w_meta in root_res["weights"].items():
         if meta_asset in sub_results:
             w_sub = sub_results[meta_asset]["weights"]
-            # Add scaled sub-weights to the final weights
             for asset, w in w_sub.items():
                 if asset in final_weights.index:
                     final_weights.loc[asset] += w * w_meta
@@ -530,19 +597,20 @@ def optimize_portfolio_multi_layer(
             if meta_asset in final_weights.index:
                 final_weights.loc[meta_asset] += w_meta
 
-    full_assets_port = Portfolio(assets=list(R.columns))
-    moments = set_portfolio_moments(R, full_assets_port)
+    # ── Compute objective measures on final leaf-level weights ───────────────
+    full_port = Portfolio(assets=list(R.columns))
+    moments = set_portfolio_moments(R, full_port)
     measures = calculate_objective_measures(
         final_weights.values, moments, portfolio.root.objectives, R=R.values
     )
 
     return {
-        "weights": final_weights,
+        "weights":            final_weights,
         "objective_measures": measures,
-        "root_result": root_res,
-        "sub_results": sub_results,
-        "status": root_res["status"],
-        "portfolio": portfolio,
+        "root_result":        root_res,
+        "sub_results":        sub_results,
+        "status":             root_res["status"],
+        "portfolio":          portfolio,
     }
 
 

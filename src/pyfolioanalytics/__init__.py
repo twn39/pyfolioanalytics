@@ -7,10 +7,12 @@ from .plots import (
     plot_risk_decomposition,
     plot_weights,
 )
-from .portfolio import Portfolio
+from .portfolio import MultLayerPortfolio, Portfolio, SubPortfolioConfig
 
 __all__ = [
     "Portfolio",
+    "SubPortfolioConfig",
+    "MultLayerPortfolio",
     "optimize_portfolio",
     "DiscreteAllocation",
     "get_latest_prices",

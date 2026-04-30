@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -378,17 +379,146 @@ class RegimePortfolio:
         return f"RegimePortfolio(regimes={self.regime_labels})"
 
 
-class MultLayerPortfolio:
-    def __init__(self, root_portfolio: Portfolio):
-        self.root = root_portfolio
-        self.sub_portfolios = {}
+@dataclass
+class SubPortfolioConfig:
+    """Per-sub-portfolio optimization configuration.
 
-    def add_sub_portfolio(self, meta_asset_name: str, sub_portfolio: 'Portfolio | MultLayerPortfolio'):
+    Wraps a ``Portfolio`` (or nested ``MultLayerPortfolio``) together with
+    the optimization parameters that apply **only** to that sub-portfolio.
+    This mirrors R's ``sub.portfolio`` object in ``mult.layer.portfolio.R``.
+
+    Parameters
+    ----------
+    portfolio:
+        The Portfolio spec for this sub-portfolio (constraints + objectives).
+    optimize_method:
+        Optimization method for this sub-portfolio only.  Completely
+        independent of the root portfolio's method and other sub-portfolios.
+        Defaults to ``"ROI"``.
+    search_size:
+        Number of random portfolios to evaluate when
+        ``optimize_method="random"``.  Mapped to the ``permutations``
+        parameter of ``optimize_portfolio()`` at call time.
+        Mirrors R's ``search_size``.  Defaults to ``20_000``.
+    kwargs:
+        Any additional keyword arguments forwarded **exclusively** to
+        ``optimize_portfolio()`` for this sub-portfolio (e.g. ``itermax``,
+        ``moment_method``).
+    """
+
+    portfolio: "Portfolio"   # type: ignore[type-arg]
+    optimize_method: str = "ROI"
+    search_size: int = 20_000
+    kwargs: dict = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        return (
+            f"SubPortfolioConfig(optimize_method={self.optimize_method!r}, "
+            f"search_size={self.search_size}, "
+            f"portfolio={self.portfolio!r})"
+        )
+
+
+
+
+class MultLayerPortfolio:
+    """Multi-layer (hierarchical) portfolio.
+
+    A ``MultLayerPortfolio`` optimises a set of sub-portfolios independently
+    and then feeds their proxy returns into a root-level optimisation.
+    Each sub-portfolio can use a completely different optimization method,
+    mirroring R's ``mult.portfolio.spec`` / ``add.sub.portfolio`` design.
+
+    Parameters
+    ----------
+    root_portfolio:
+        The top-level ``Portfolio`` that defines constraints and objectives
+        over the meta-assets (each meta-asset is one sub-portfolio).
+    """
+
+    def __init__(self, root_portfolio: "Portfolio"):
+        self.root = root_portfolio
+        # Values are SubPortfolioConfig instances (legacy bare Portfolios are
+        # auto-wrapped on access inside optimize_portfolio_multi_layer).
+        self.sub_portfolios: dict[str, SubPortfolioConfig] = {}
+
+    def add_sub_portfolio(
+        self,
+        meta_asset_name: str,
+        sub_portfolio: "Portfolio | SubPortfolioConfig | MultLayerPortfolio",
+        optimize_method: str = "ROI",
+        search_size: int = 20_000,
+        **sub_kwargs,
+    ) -> "MultLayerPortfolio":
+        """Add a sub-portfolio to this multi-layer portfolio.
+
+        Parameters
+        ----------
+        meta_asset_name:
+            Name of the meta-asset in the root portfolio that this
+            sub-portfolio represents.  Must already exist in ``root.assets``.
+        sub_portfolio:
+            A ``Portfolio``, ``MultLayerPortfolio``, or pre-built
+            ``SubPortfolioConfig``.  Bare ``Portfolio`` /
+            ``MultLayerPortfolio`` objects are automatically wrapped in a
+            ``SubPortfolioConfig`` using the remaining parameters.
+        optimize_method:
+            Optimization method for *this* sub-portfolio only.
+            Independent of the root portfolio and every other sub-portfolio.
+        search_size:
+            Random-portfolio search size for this sub-portfolio.
+            Only relevant when ``optimize_method="random"``.
+            Mapped to ``permutations`` inside ``optimize_portfolio()``.
+        **sub_kwargs:
+            Additional kwargs forwarded exclusively to ``optimize_portfolio()``
+            for this sub-portfolio (e.g. ``itermax=100``,
+            ``moment_method="ledoit_wolf"``).
+        """
         if meta_asset_name not in self.root.assets:
             raise ValueError(
-                f"'{meta_asset_name}' must be defined as an asset in the root portfolio."
+                f"'{meta_asset_name}' must be defined as an asset in the "
+                "root portfolio."
             )
-        self.sub_portfolios[meta_asset_name] = sub_portfolio
+
+        if isinstance(sub_portfolio, SubPortfolioConfig):
+            # Already a fully-specified config — store as-is.
+            config = sub_portfolio
+        else:
+            # Bare Portfolio or MultLayerPortfolio → auto-wrap.
+            config = SubPortfolioConfig(
+                portfolio=sub_portfolio,
+                optimize_method=optimize_method,
+                search_size=search_size,
+                kwargs=sub_kwargs,
+            )
+
+        self.sub_portfolios[meta_asset_name] = config
+        return self
+
+    def leaf_assets(self) -> list[str]:
+        """Return the names of all real (leaf) assets in this hierarchy.
+
+        For a nested ``MultLayerPortfolio``, the root's ``assets`` dict
+        contains virtual meta-asset names that do not correspond to columns
+        in the returns DataFrame ``R``.  This method recursively resolves
+        every sub-portfolio to its actual leaf assets so that ``R`` can be
+        subset correctly at any nesting depth.
+        """
+        leaves: list[str] = []
+        for meta_asset, config in self.sub_portfolios.items():
+            sub = config.portfolio if isinstance(config, SubPortfolioConfig) else config
+            if hasattr(sub, "leaf_assets"):
+                # Nested MultLayerPortfolio — recurse.
+                leaves.extend(sub.leaf_assets())
+            else:
+                # Plain Portfolio — its assets are the real leaf assets.
+                leaves.extend(sub.assets.keys())
+        # Append any root assets that are NOT backed by a sub-portfolio
+        # (i.e. real assets at the root level).
+        for asset in self.root.assets:
+            if asset not in self.sub_portfolios:
+                leaves.append(asset)
+        return leaves
 
     def clear_objectives(self):
         self.objectives = []
