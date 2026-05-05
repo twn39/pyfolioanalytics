@@ -1,26 +1,47 @@
 [project]
 name = "pyfolioanalytics"
 version = "0.3.0"
-description = "Add your description here"
+description = "High-fidelity Python implementation of R PortfolioAnalytics — portfolio optimisation, risk measures, and moment estimation with cross-validated mathematical parity."
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "curry tang", email = "twn39@163.com" }
 ]
+keywords = [
+    "portfolio", "optimisation", "finance", "quantitative",
+    "black-litterman", "risk", "cvxpy", "mean-variance",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
 requires-python = ">=3.12"
 dependencies = [
-    "clarabel>=0.11.1",
-    "cvxopt>=1.3.3",
-    "cvxpy>=1.8.2",
-    "highspy>=1.14.0",
-    "kaleido>=1.2.0",
-    "networkx>=3.6.1",
-    "numpy>=2.4.4",
-    "pandas>=3.0.2",
-    "plotly>=6.7.0",
-    "pyscipopt>=6.1.0",
-    "scikit-learn>=1.8.0",
-    "scipy>=1.17.1",
+    "clarabel>=0.9",
+    "cvxopt>=1.3",
+    "cvxpy>=1.6",
+    "highspy>=1.7",
+    "kaleido>=0.2",
+    "networkx>=3.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "plotly>=5.0",
+    "pyscipopt>=5.0",
+    "scikit-learn>=1.4",
+    "scipy>=1.13",
 ]
+
+[project.urls]
+Homepage = "https://github.com/twn39/pyfolioanalytics"
+Repository = "https://github.com/twn39/pyfolioanalytics"
+"Bug Tracker" = "https://github.com/twn39/pyfolioanalytics/issues"
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
@@ -31,20 +52,21 @@ source-exclude = [
     "third_party/**",
     "GEMINI.md",
     "data/**",
-    "scripts/**"
+    "scripts/**",
+    "ANALYSIS_REPORT.md",
 ]
 
 [dependency-groups]
 dev = [
     "pyportfolioopt>=1.6.0",
-    "pytest>=9.0.3",
-    "ruff>=0.15.10",
-    "akshare>=1.18.55",
+    "pytest>=9.0",
+    "pytest-cov>=7.0",
+    "ruff>=0.4",
     "ty>=0.0.31",
-    "yfinance>=1.2.2",
-    "riskfolio-lib>=7.2.1",
-    "kaleido>=1.2.0",
-    "pytest-cov>=7.1.0",
+    "akshare>=1.18",
+    "yfinance>=1.0",
+    "riskfolio-lib>=7.0",
+    "kaleido>=0.2",
 ]
 
 [tool.pytest.ini_options]
@@ -52,9 +74,22 @@ testpaths = ["tests"]
 norecursedirs = ["third_party", ".*", "cvxopt", "cvxpy", "numpy", "pandas", "pyscipopt", "riskfolio-lib", "scikit-learn", "scipy", "yfinance"]
 addopts = "-v"
 
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "E741",   # ambiguous variable names (l, O, I) — common in finance math
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "F811"]  # allow unused imports and redefinitions in tests
+
 [tool.ty.src]
 include = ["src", "tests"]
 exclude = [
-    "src/pyfolioanalytics/dbht.py",
+    "src/pyfolioanalytics/dbht.py",  # legacy MATLAB-style code; no type annotations
 ]
-
