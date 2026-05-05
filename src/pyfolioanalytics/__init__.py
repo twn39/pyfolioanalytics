@@ -1,4 +1,9 @@
 from .discrete_allocation import DiscreteAllocation, get_latest_prices
+from .moments import (
+    MomentConfig,
+    register_cov_estimator,
+    register_mu_estimator,
+)
 from .optimize import optimize_portfolio
 from .plots import (
     plot_dendrogram,
@@ -26,4 +31,8 @@ __all__ = [
     "LPM",
     "SemiDeviation",
     "SemiVariance",
+    # Moment estimation
+    "MomentConfig",
+    "register_cov_estimator",
+    "register_mu_estimator",
 ]

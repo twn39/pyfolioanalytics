@@ -1,3 +1,4 @@
+from dataclasses import fields as _dc_fields
 from typing import Any
 
 import numpy as np
@@ -5,7 +6,7 @@ import pandas as pd
 
 from .convex_solvers import RISK_STRATEGIES, ConvexOptimizer
 from .ml import herc_optimization, hrp_optimization, nco_optimization
-from .moments import set_portfolio_moments
+from .moments import MomentConfig, set_portfolio_moments
 from .portfolio import Portfolio, SubPortfolioConfig
 from .random_portfolios import random_portfolios
 from .risk import (
@@ -34,6 +35,12 @@ from .solvers import (
     solve_mdiv,
     solve_noc,
     solve_nonlinear,
+)
+
+# Pre-computed set of MomentConfig field names for O(1) kwargs filtering.
+# Built once at import time; avoids per-call overhead in optimize_portfolio.
+_MOMENT_CONFIG_KEYS: frozenset[str] = frozenset(
+    f.name for f in _dc_fields(MomentConfig)
 )
 
 
@@ -197,8 +204,14 @@ def optimize_portfolio(
         )
 
     # 2. Setup Moments
+    # Pre-filter kwargs to MomentConfig fields so that solver/optimizer
+    # kwargs (solver, itermax, permutations, …) never reach the moment
+    # estimator.  Responsibility for separation lives here at the call
+    # boundary, not inside MomentConfig.
     moment_method = kwargs.get("moment_method", "sample")
-    moments = set_portfolio_moments(R, portfolio, method=moment_method, **kwargs)
+    moment_kwargs = {k: v for k, v in kwargs.items() if k in _MOMENT_CONFIG_KEYS}
+    moment_config = MomentConfig(method=moment_method, **moment_kwargs)
+    moments = set_portfolio_moments(R, portfolio, config=moment_config)
 
     # 3. Setup Constraints
     constraints = portfolio.get_constraints()

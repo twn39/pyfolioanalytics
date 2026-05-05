@@ -1,4 +1,5 @@
-from typing import Any
+from dataclasses import dataclass, fields as _dc_fields
+from typing import Any, Protocol, runtime_checkable
 import warnings
 
 import numpy as np
@@ -460,179 +461,477 @@ def ccc_garch_moments(R: np.ndarray, mu: np.ndarray | None = None) -> dict[str, 
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MomentConfig — typed replacement for **kwargs scatter-gun
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class MomentConfig:
+    """Typed configuration for :func:`set_portfolio_moments`.
+
+    Replaces the untyped ``**kwargs`` API.  All parameters are documented
+    and type-checked.  Unknown kwargs passed via the legacy path emit a
+    :class:`DeprecationWarning`.
+    """
+    # Dispatch
+    method: str = "sample"
+    sigma_method: str | None = None      # falls back to method if None
+    mu_method: str | None = None         # falls back to method if None
+    comoment_method: str = "sample"
+
+    # Return cleaning
+    clean_returns: str | None = None
+    clean_alpha: float = 0.05
+
+    # Shrinkage
+    shrinkage_target: str = "constant_variance"
+
+    # Factor model / comoments
+    k: int = 1
+    comoment_alpha: float = 0.0
+
+    # EWMA
+    span: int = 36
+    ema_span: int = 252
+
+    # AC Ranking
+    order: list[str] | None = None
+
+    # Semi-covariance
+    benchmark: float = 0.0
+
+    # CAPM
+    market_returns: "pd.Series | None" = None
+    market_caps: Any = None
+    risk_free_rate: float = 0.0
+
+    # Black-Litterman
+    P: "np.ndarray | None" = None
+    q: "np.ndarray | None" = None
+    Omega: "np.ndarray | None" = None
+    Mu: "np.ndarray | None" = None
+    Sigma: "np.ndarray | None" = None
+    bl_formulation: str = "meucci"
+    tau: Any = "auto"
+    risk_aversion: float = 2.5
+    w_mkt: "np.ndarray | None" = None
+
+    # Denoising (RMT)
+    denoise_method: str = "fixed"
+
+    # Meucci / Entropy Pooling
+    prior_probs: "np.ndarray | None" = None
+    Aeq: "np.ndarray | None" = None
+    beq: "np.ndarray | None" = None
+
+    @classmethod
+    def from_kwargs(cls, method: str = "sample", **kwargs: Any) -> "MomentConfig":
+        """Build a :class:`MomentConfig` from legacy ``**kwargs``.
+
+        Only pass kwargs that are actually moment-estimation parameters;
+        the caller is responsible for filtering out solver/optimizer kwargs
+        *before* calling this method.  Any field not recognised as a
+        :class:`MomentConfig` attribute emits a :class:`DeprecationWarning`.
+        """
+        known = {f.name for f in _dc_fields(cls)}
+        filtered: dict[str, Any] = {}
+        unknown: list[str] = []
+        for k, v in kwargs.items():
+            if k in known:
+                filtered[k] = v
+            else:
+                unknown.append(k)
+        if unknown:
+            warnings.warn(
+                f"set_portfolio_moments received unknown keyword argument(s) "
+                f"{unknown!r}; they are ignored. "
+                f"Pass a MomentConfig object instead of **kwargs to silence this warning.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return cls(method=method, **filtered)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Protocols
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FitResult = "np.ndarray | dict[str, Any]"
+
+
+@runtime_checkable
+class CovarianceEstimator(Protocol):
+    """Structural interface for covariance matrix estimators.
+
+    ``fit()`` may return either:
+
+    * ``np.ndarray`` — the (N, N) covariance matrix only.
+    * ``dict`` — a multi-moment result containing at minimum ``"sigma"``;
+      may also contain ``"mu"`` (side-effect mean) and control flags
+      ``"_mu_priority"`` (bool, BL: mu cannot be overridden) and
+      ``"_mu_from_cov"`` (bool, GARCH/EWMA/Meucci: mu as side-effect).
+    """
+
+    def fit(self, R: "pd.DataFrame") -> _FitResult:  # type: ignore[type-arg]
+        ...
+
+
+@runtime_checkable
+class ReturnEstimator(Protocol):
+    """Structural interface for expected-return estimators."""
+
+    def fit(self, R: "pd.DataFrame") -> "np.ndarray":
+        ...
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Registries
+# ─────────────────────────────────────────────────────────────────────────────
+
+_COV_REGISTRY: dict[str, type] = {}
+_MU_REGISTRY: dict[str, type] = {}
+
+
+def register_cov_estimator(*names: str):
+    """Class decorator that registers a covariance estimator under *names*."""
+    def decorator(cls: type) -> type:
+        for name in names:
+            _COV_REGISTRY[name] = cls
+        return cls
+    return decorator
+
+
+def register_mu_estimator(*names: str):
+    """Class decorator that registers a return estimator under *names*."""
+    def decorator(cls: type) -> type:
+        for name in names:
+            _MU_REGISTRY[name] = cls
+        return cls
+    return decorator
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Covariance estimators
+# ─────────────────────────────────────────────────────────────────────────────
+
+@register_cov_estimator("sample")
+class SampleCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None: ...
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return R.cov().values
+
+
+@register_cov_estimator("shrinkage", "ledoit_wolf", "oas")
+class ShrinkageCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.target = cfg.shrinkage_target
+        self.sigma_method = cfg.sigma_method or cfg.method
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        # Map legacy "shrinkage" → ledoit_wolf / oas
+        if self.sigma_method == "shrinkage":
+            method_arg = "oas" if self.target == "oas" else "ledoit_wolf"
+            target = "constant_variance" if self.target == "identity" else self.target
+        else:
+            method_arg = self.sigma_method
+            target = self.target
+        return shrunk_covariance(R, method=method_arg, shrinkage_target=target)
+
+
+@register_cov_estimator("factor_model")
+class FactorModelCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.k = cfg.k
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        fm = statistical_factor_model(R, k=self.k)
+        return factor_model_covariance(fm)
+
+
+@register_cov_estimator("robust", "mcd")
+class RobustCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None: ...
+
+    def fit(self, R: pd.DataFrame) -> dict[str, Any]:
+        from sklearn.covariance import MinCovDet
+        mcd = MinCovDet(random_state=42).fit(R.values)
+        return {
+            "sigma": mcd.covariance_,
+            "mu": mcd.location_.reshape(-1, 1),
+            "_mu_from_cov": True,
+        }
+
+
+@register_cov_estimator("denoised")
+class DenoisedCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.denoise_method = cfg.denoise_method
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        from .rmt import denoise_covariance
+        T, N = R.shape
+        sigma = R.cov().values
+        return denoise_covariance(sigma, T / N, method=self.denoise_method)
+
+
+@register_cov_estimator("garch")
+class GARCHCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None: ...
+
+    def fit(self, R: pd.DataFrame) -> dict[str, Any]:
+        res = ccc_garch_moments(R.values)
+        return {"sigma": res["sigma"], "mu": res["mu"], "_mu_from_cov": True}
+
+
+@register_cov_estimator("ewma")
+class EWMACovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.span = cfg.span
+
+    def fit(self, R: pd.DataFrame) -> dict[str, Any]:
+        res = ewma_moments(R.values, span=self.span)
+        return {"sigma": res["sigma"], "mu": res["mu"], "_mu_from_cov": True}
+
+
+@register_cov_estimator("semi_covariance")
+class SemiCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.benchmark = cfg.benchmark
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return semi_covariance(R.values, benchmark=self.benchmark)
+
+
+@register_cov_estimator("black_litterman")
+class BlackLittermanEstimator:
+    """BL always produces both sigma and mu; its mu takes priority over any
+    separate mu-method request, mirroring R's ``portfolio.moments.bl``."""
+
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.cfg = cfg
+
+    def fit(self, R: pd.DataFrame) -> dict[str, Any]:
+        from .black_litterman import black_litterman as _bl
+        cfg = self.cfg
+        asset_names = list(R.columns)
+        P = cfg.P if cfg.P is not None else np.ones((1, len(asset_names)))
+        res = _bl(
+            R.values, P=P, q=cfg.q,
+            Mu=cfg.Mu, Sigma=cfg.Sigma, Omega=cfg.Omega,
+            formulation=cfg.bl_formulation,
+            tau=cfg.tau, risk_aversion=cfg.risk_aversion, w_mkt=cfg.w_mkt,
+        )
+        return {
+            "sigma": res["sigma"],
+            "mu": res["mu"].reshape(-1, 1),
+            "_mu_from_cov": True,
+            "_mu_priority": True,   # BL mu cannot be overridden by a mu-method
+        }
+
+
+@register_cov_estimator("meucci")
+class MeucciCovarianceEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.cfg = cfg
+
+    def fit(self, R: pd.DataFrame) -> dict[str, Any]:
+        from .meucci import entropy_pooling, meucci_moments
+        T = R.shape[0]
+        prior = self.cfg.prior_probs if self.cfg.prior_probs is not None else np.full(T, 1.0 / T)
+        p = entropy_pooling(prior, Aeq=self.cfg.Aeq, beq=self.cfg.beq)
+        res = meucci_moments(R.values, p)
+        return {"sigma": res["sigma"], "mu": res["mu"], "_mu_from_cov": True}
+
+
+@register_cov_estimator("ac_ranking")
+class ACRankingCovarianceEstimator:
+    """AC Ranking only affects the mean; covariance is sample."""
+    def __init__(self, cfg: MomentConfig) -> None: ...
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return R.cov().values
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Return estimators
+# ─────────────────────────────────────────────────────────────────────────────
+
+@register_mu_estimator(
+    "sample", "historical", "semi_covariance",
+    "shrinkage", "denoised", "factor_model",
+    # Methods below produce sigma+mu together; if explicitly requested as
+    # mu_method they fall back to the sample mean (matching legacy behaviour).
+    "garch", "ewma", "meucci", "robust", "mcd", "black_litterman",
+)
+class SampleReturnEstimator:
+    def __init__(self, cfg: MomentConfig) -> None: ...
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return R.mean().values.reshape(-1, 1)
+
+
+@register_mu_estimator("ema")
+class EMAReturnEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.span = cfg.ema_span
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return ema_returns(R, span=self.span)
+
+
+@register_mu_estimator("capm")
+class CAPMReturnEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.cfg = cfg
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        return capm_returns(
+            R,
+            market_returns=self.cfg.market_returns,
+            market_caps=self.cfg.market_caps,
+            risk_free_rate=self.cfg.risk_free_rate,
+        )
+
+
+@register_mu_estimator("ac_ranking")
+class ACRankingReturnEstimator:
+    def __init__(self, cfg: MomentConfig) -> None:
+        self.order = cfg.order
+
+    def fit(self, R: pd.DataFrame) -> np.ndarray:
+        if self.order is None:
+            raise ValueError("Method 'ac_ranking' requires an 'order' argument in MomentConfig.")
+        return ac_ranking(R, self.order).reshape(-1, 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# set_portfolio_moments — thin dispatcher (backward-compatible)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def set_portfolio_moments(
-    R: pd.DataFrame, portfolio: Any, method: str = "sample", **kwargs
+    R: pd.DataFrame,
+    portfolio: Any,
+    method: str = "sample",
+    config: MomentConfig | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    # Handle Multi-Layer Portfolio
+    """Estimate portfolio moments (μ, Σ, and optionally M3/M4).
+
+    **Legacy style** (fully backward-compatible)::
+
+        set_portfolio_moments(R, port, method="shrinkage",
+                              shrinkage_target="constant_correlation")
+
+    **New typed style** (preferred; silences DeprecationWarnings)::
+
+        cfg = MomentConfig(method="shrinkage",
+                           shrinkage_target="constant_correlation")
+        set_portfolio_moments(R, port, config=cfg)
+
+    Parameters
+    ----------
+    R:
+        Returns ``DataFrame`` (T × N).
+    portfolio:
+        A :class:`~pyfolioanalytics.portfolio.Portfolio` instance.
+    method:
+        Default estimation method when ``sigma_method`` / ``mu_method``
+        are not separately specified.
+    config:
+        Typed configuration object.  If ``None``, one is built from
+        ``method`` and ``**kwargs`` (legacy path).
+    **kwargs:
+        Legacy keyword arguments.  Known fields are forwarded to
+        :class:`MomentConfig`; unknown fields emit a
+        :class:`DeprecationWarning`.
+    """
+    # Build config from legacy kwargs if not provided
+    if config is None:
+        config = MomentConfig.from_kwargs(method=method, **kwargs)
+
+    # ── Asset filtering ────────────────────────────────────────────────────
     if hasattr(portfolio, "root"):
         portfolio = portfolio.root
-
-    moments = {}
     asset_names = list(portfolio.assets.keys())
     R_filtered = R[asset_names]
-    
-    # Handle Return Cleaning (e.g. Boudt robust winsorization)
-    clean_method = kwargs.get("clean_returns")
-    if clean_method == "boudt":
-        alpha = kwargs.get("clean_alpha", 0.05)
-        R_filtered = pd.DataFrame(clean_returns_boudt(R_filtered, alpha=alpha), columns=R_filtered.columns, index=R_filtered.index)
 
-    # Resolve covariance and expected return methods
-    sigma_method = kwargs.get("sigma_method", method)
-    mu_method = kwargs.get("mu_method", method)
+    # ── Return cleaning ────────────────────────────────────────────────────
+    if config.clean_returns == "boudt":
+        R_filtered = pd.DataFrame(
+            clean_returns_boudt(R_filtered, alpha=config.clean_alpha),
+            columns=R_filtered.columns,
+            index=R_filtered.index,
+        )
 
-    # 1. Covariance Matrix Estimation
-    if sigma_method == "sample":
-        moments["sigma"] = R_filtered.cov().values
-    elif sigma_method == "factor_model":
-        k = kwargs.get("k", 3)
-        fm = statistical_factor_model(R_filtered, k=k)
-        moments["sigma"] = factor_model_covariance(fm)
-    elif sigma_method == "shrinkage" or sigma_method == "ledoit_wolf" or sigma_method == "oas":
-        target = kwargs.get("shrinkage_target", "constant_variance")
-        # Handle legacy "shrinkage" method mappings
-        if sigma_method == "shrinkage":
-            if target == "identity":
-                target = "constant_variance"
-            method_arg = "oas" if target == "oas" else "ledoit_wolf"
-        else:
-            method_arg = sigma_method
-        
-        moments["sigma"] = shrunk_covariance(R_filtered, method=method_arg, shrinkage_target=target)
-    elif sigma_method == "robust" or sigma_method == "mcd":
-        from sklearn.covariance import MinCovDet
-        mcd = MinCovDet(random_state=42).fit(R_filtered.values)
-        moments["sigma"] = mcd.covariance_
-        # MCD also robustly estimates the mean
-        if kwargs.get("mu_method") is None and (method == "mcd" or method == "robust"):
-            moments["mu"] = mcd.location_.reshape(-1, 1)
-    elif sigma_method == "denoised":
-        from .rmt import denoise_covariance
-        T, N = R_filtered.shape
-        q = T / N
-        sigma = R_filtered.cov().values
-        moments["sigma"] = denoise_covariance(
-            sigma, q, method=kwargs.get("denoise_method", "fixed")
+    moments: dict[str, Any] = {}
+
+    # ── Covariance estimation ──────────────────────────────────────────────
+    sigma_method = config.sigma_method or config.method
+    cov_cls = _COV_REGISTRY.get(sigma_method)
+    if cov_cls is None:
+        raise NotImplementedError(
+            f"Covariance method '{sigma_method}' is not registered. "
+            f"Available: {sorted(_COV_REGISTRY)}"
         )
-    elif sigma_method == "garch":
-        garch_res = ccc_garch_moments(R_filtered.values)
-        moments["sigma"] = garch_res["sigma"]
-        if kwargs.get("mu_method") is None and method == "garch":
-            moments["mu"] = garch_res["mu"]
-    elif sigma_method == "ewma":
-        span = kwargs.get("span", 36)
-        res_ewma = ewma_moments(R_filtered.values, span=span)
-        moments["sigma"] = res_ewma["sigma"]
-        if kwargs.get("mu_method") is None and method == "ewma":
-            moments["mu"] = res_ewma["mu"]
-    elif sigma_method == "semi_covariance":
-        benchmark = kwargs.get("benchmark", 0.0)
-        moments["sigma"] = semi_covariance(R_filtered.values, benchmark=benchmark)
-    elif sigma_method == "black_litterman":
-        from .black_litterman import black_litterman as _bl
-        # Prior estimation: None → sample (mirrors R's black.litterman() defaults).
-        Mu_prior    = kwargs.get("Mu")     # N-vector or None
-        Sigma_prior = kwargs.get("Sigma")  # N×N or None
-        # View matrix: R default is a single equal-weight row → matrix(rep(1, N), nrow=1)
-        P = kwargs.get(
-            "P", np.ones((1, len(asset_names)))
-        )
-        q            = kwargs.get("q")              # None → sqrt(diag(Omega))
-        Omega        = kwargs.get("Omega")           # None → P Sigma P'
-        formulation  = kwargs.get("bl_formulation", "meucci")
-        tau          = kwargs.get("tau", "auto")    # "auto" → 1/T
-        risk_aversion = kwargs.get("risk_aversion", 2.5)
-        w_mkt        = kwargs.get("w_mkt")
-        res_bl = _bl(
-            R_filtered.values, P=P, q=q,
-            Mu=Mu_prior, Sigma=Sigma_prior, Omega=Omega,
-            formulation=formulation,
-            tau=tau, risk_aversion=risk_aversion, w_mkt=w_mkt,
-        )
-        # Always write both moments — mirrors R's portfolio.moments.bl which
-        # unconditionally sets BLMu and BLSigma for every objective type.
-        moments["sigma"] = res_bl["sigma"]
-        moments["mu"]    = res_bl["mu"].reshape(-1, 1)
-        # Sentinel: prevent the downstream mu-estimation block from
-        # overwriting the BL mu with a plain sample estimate.
-        moments["_bl_moments_set"] = True
-    elif sigma_method == "meucci":
-        from .meucci import entropy_pooling, meucci_moments
-        T, N = R_filtered.shape
-        prior_probs = kwargs.get("prior_probs", np.full(T, 1.0 / T))
-        Aeq = kwargs.get("Aeq")
-        beq = kwargs.get("beq")
-        p = entropy_pooling(prior_probs, Aeq=Aeq, beq=beq)
-        res_m = meucci_moments(R_filtered.values, p)
-        moments["sigma"] = res_m["sigma"]
-        if kwargs.get("mu_method") is None and method == "meucci":
-            moments["mu"] = res_m["mu"]
-    elif sigma_method == "ac_ranking":
-        moments["sigma"] = R_filtered.cov().values
+    cov_result = cov_cls(config).fit(R_filtered)
+
+    # Combined estimators return a dict with control flags
+    if isinstance(cov_result, dict):
+        mu_priority = bool(cov_result.pop("_mu_priority", False))
+        mu_from_cov = bool(cov_result.pop("_mu_from_cov", False))
+        moments.update(cov_result)
     else:
-        raise NotImplementedError(f"Covariance method '{sigma_method}' is not implemented.")
+        moments["sigma"] = cov_result
+        mu_priority = False
+        mu_from_cov = False
 
-    # 2. Expected Returns Estimation
-    # Guard: skip if BL already wrote mu unconditionally (sentinel prevents
-    # a plain sample estimate from silently overwriting the view-adjusted mu).
-    if not moments.get("_bl_moments_set") and (
-        "mu" not in moments or mu_method != method
-    ):
-        if mu_method == "sample" or mu_method == "historical" or mu_method == "semi_covariance" or mu_method == "shrinkage" or mu_method == "denoised":
-            moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-        elif mu_method == "ema":
-            span = kwargs.get("ema_span", 252)
-            moments["mu"] = ema_returns(R_filtered, span=span)
-        elif mu_method == "capm":
-            moments["mu"] = capm_returns(
-                R_filtered, 
-                market_returns=kwargs.get("market_returns"),
-                market_caps=kwargs.get("market_caps"),
-                risk_free_rate=kwargs.get("risk_free_rate", 0.0)
-            )
-        elif mu_method == "ac_ranking":
-            order = kwargs.get("order")
-            if order is None:
-                raise ValueError("Method 'ac_ranking' requires an 'order' argument.")
-            moments["mu"] = ac_ranking(R_filtered, order).reshape(-1, 1)
-        elif mu_method == "factor_model":
-            moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+    # ── Return estimation ──────────────────────────────────────────────────
+    # Priority rules (matching legacy behaviour exactly):
+    #   1. BL mu_priority=True  → always use BL mu, never override.
+    #   2. Combined estimator set mu AND no explicit mu_method override
+    #      → use the side-effect mu (GARCH/EWMA/Meucci convention).
+    #   3. Otherwise → call the registered mu estimator.
+    mu_method = config.mu_method or config.method
+    do_mu_estimation = not mu_priority and (
+        not mu_from_cov or config.mu_method is not None
+    )
+    if do_mu_estimation:
+        mu_cls = _MU_REGISTRY.get(mu_method)
+        if mu_cls is not None:
+            moments["mu"] = mu_cls(config).fit(R_filtered)
         elif "mu" not in moments:
-             # Ultimate fallback
-             moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
-             
-    # Ensure sigma is set if somehow still missing
+            # Ultimate fallback: sample mean
+            moments["mu"] = R_filtered.mean().values.reshape(-1, 1)
+
+    # ── Sigma fallback ─────────────────────────────────────────────────────
     if "sigma" not in moments:
         moments["sigma"] = R_filtered.cov().values
 
-    # Only compute higher-order moments for modified (Cornish-Fisher) VaR/ES,
-    # not for Gaussian — avoids O(T·N⁴) work when not needed.
+    # ── Higher-order moments (M3 / M4) ────────────────────────────────────
+    # Only computed for modified (Cornish-Fisher) VaR/ES objectives to
+    # avoid O(T·N⁴) work when not needed.
     needs_m3_m4 = any(
-        obj["name"] in ["VaR", "ES", "mVaR", "mES"]
+        obj["name"] in ("VaR", "ES", "mVaR", "mES")
         and obj.get("arguments", {}).get("method", "gaussian") == "modified"
         for obj in portfolio.objectives
         if obj.get("enabled", True)
     )
     if needs_m3_m4:
         R_centered = R_filtered.values - moments["mu"].T
-
-        # Determine calculation method for M3/M4
-        comoment_method = kwargs.get("comoment_method", "sample")
-        alpha = kwargs.get("comoment_alpha", 0.0)
-        k_factors = kwargs.get("k", 1)
-
-        if comoment_method == "sample":
+        cm_method = config.comoment_method
+        alpha = config.comoment_alpha
+        k = config.k
+        if cm_method == "sample":
             moments["m3"] = M3_MM(R_centered)
             moments["m4"] = M4_MM(R_centered)
-        elif comoment_method == "factor_model":
-            moments["m3"] = M3_SFM(R_filtered, k=k_factors)
-            moments["m4"] = M4_SFM(R_filtered, k=k_factors)
-        elif comoment_method == "shrinkage":
-            m3_sample = M3_MM(R_centered)
-            m4_sample = M4_MM(R_centered)
-            m3_target = M3_SFM(R_filtered, k=k_factors)
-            m4_target = M4_SFM(R_filtered, k=k_factors)
-            moments["m3"] = shrink_comoments(m3_sample, m3_target, alpha=alpha)
-            moments["m4"] = shrink_comoments(m4_sample, m4_target, alpha=alpha)
+        elif cm_method == "factor_model":
+            moments["m3"] = M3_SFM(R_filtered, k=k)
+            moments["m4"] = M4_SFM(R_filtered, k=k)
+        elif cm_method == "shrinkage":
+            moments["m3"] = shrink_comoments(M3_MM(R_centered), M3_SFM(R_filtered, k=k), alpha=alpha)
+            moments["m4"] = shrink_comoments(M4_MM(R_centered), M4_SFM(R_filtered, k=k), alpha=alpha)
 
     return moments
+
