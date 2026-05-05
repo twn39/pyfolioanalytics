@@ -28,7 +28,6 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 source-exclude = [
-    "src/pyfolioanalytics/dbht.py",
     "third_party/**",
     "GEMINI.md",
     "data/**",
