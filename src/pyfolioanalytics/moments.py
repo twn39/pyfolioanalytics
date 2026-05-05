@@ -509,7 +509,8 @@ class MomentConfig:
     # Black-Litterman
     P: "np.ndarray | None" = None
     q: "np.ndarray | None" = None
-    Omega: "np.ndarray | None" = None
+    Omega: "np.ndarray | str | None" = None   # accepts 'idzorek'
+    view_confidences: "np.ndarray | None" = None  # required when Omega='idzorek'
     Mu: "np.ndarray | None" = None
     Sigma: "np.ndarray | None" = None
     bl_formulation: str = "meucci"
@@ -720,6 +721,7 @@ class BlackLittermanEstimator:
         res = _bl(
             R.values, P=P, q=cfg.q,
             Mu=cfg.Mu, Sigma=cfg.Sigma, Omega=cfg.Omega,
+            view_confidences=cfg.view_confidences,
             formulation=cfg.bl_formulation,
             tau=cfg.tau, risk_aversion=cfg.risk_aversion, w_mkt=cfg.w_mkt,
         )

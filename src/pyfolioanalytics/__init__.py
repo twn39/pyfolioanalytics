@@ -1,3 +1,4 @@
+from .black_litterman import black_litterman_tilt, idzorek_omega
 from .discrete_allocation import DiscreteAllocation, get_latest_prices
 from .moments import (
     MomentConfig,
@@ -35,4 +36,7 @@ __all__ = [
     "MomentConfig",
     "register_cov_estimator",
     "register_mu_estimator",
+    # Black-Litterman utilities
+    "idzorek_omega",
+    "black_litterman_tilt",
 ]
