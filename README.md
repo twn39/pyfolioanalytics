@@ -24,14 +24,17 @@
 ### 2. 统计矩估计 (Statistical Moments)
 提供多样化的均值、协方差及高阶矩估计技术，用于降低估计误差：
 -   **动态波动率**: `CCC-GARCH` (单变量 GARCH + 常相关) 矩估计。
--   **主观观点整合**: `Meucci Entropy Pooling` (支持解析梯度) 与 `Black-Litterman`。
--   **稳健估计**: `MinCovDet` (鲁棒协方差), `Ledoit-Wolf` (收缩估计)。
+-   **主观观点整合**: `Meucci Entropy Pooling` (支持解析梯度) 与 `Black-Litterman`（支持 **Meucci** 和 **He-Litterman** 双公式）。
+    -   **Idzorek 置信方法**: 通过 `idzorek_omega()` 或 `Omega="idzorek"` 直接以百分比置信度（0~100%）代替手工指定的方差矩阵，大幅降低 BL 参数化难度。
+-   **稳健估计**: `MinCovDet` (鲁棒协方差), `Ledoit-Wolf` / `OAS` (收缩估计), `Semi-Covariance`。
 -   **随机矩阵理论 (RMT)**: 特征值去噪（Fixed, Spectral, Shrink 方法）。
--   **高阶矩**: 样本及统计因子模型（SFM）生成的 **共偏度 (M3)** 和 **共峰度 (M4)** 矩阵。
+-   **高阶矩**: 样本及统计因子模型（SFM）生成的 **共偏度 (M3)** 和 **共峰度 (M4)** 矩阵；支持因子模型收缩。
+-   **类型安全估计器 API**: `MomentConfig` dataclass 替代 `**kwargs` 散打，配合 `register_cov_estimator` / `register_mu_estimator` 装饰器支持用户自定义估计器插件注册。
 
 ### 3. 风险度量与归因 (Risk Analysis)
 涵盖从经典波动率到前沿稳健度量的全方位分析：
 -   **经典与修正风险**: Gaussian/Modified (Cornish-Fisher) VaR 和 ES (CVaR)。
+-   **下行风险**: `SemiDeviation` / `SemiVariance`（基于 LPM p=2 的标准化接口，与 Riskfolio-Lib 对齐）、`MAD`、`semi_MAD`。
 -   **回撤风险**: `CDaR` (条件回撤), `EDaR` (熵回撤), `MaxDrawdown`，以及惩罚持续深度的 **`Ulcer Index (溃疡指数)`**。
 -   **现代稳健度量**: `EVaR` (熵 VaR), `RLVaR/RLDaR` (基于稳健线性规划的 VaR/DaR)。
 -   **排序加权 (OWA)**: 支持 GMD、L-Moments 权重、CRM 权重等 OWA 风险度量。
@@ -62,7 +65,7 @@
 
 本项目每一项核心算法均通过了与 R 语言 `PortfolioAnalytics` 原生库的对比验证：
 -   **验证数据集**: 包含 `edhec` 策略数据及 2020-2026 年真实股票数据。
--   **自动化断言**: 在 `tests/` 下有超过 100 个测试用例，确保 Python 与 R 的计算结果在 `1e-7` 精度下一致。
+-   **自动化断言**: 在 `tests/` 下有超过 **400 个测试用例**，确保 Python 与 R 的计算结果在 `1e-7` 精度下一致。
 -   **透明逻辑**: 所有基准生成的 R 脚本均保留在 `scripts/` 目录，供用户复现。
 
 ## 📚 官方文档
@@ -82,8 +85,9 @@
 
 ## 📂 项目结构
 -   `src/pyfolioanalytics/`:
-    -   `moments.py`: 所有矩估计逻辑（GARCH, RMT, Shrinkage）。
-    -   `risk.py`: 风险度量（VaR, ES, OWA, RLVaR）与归因分解。
+    -   `moments.py`: 所有矩估计逻辑（GARCH, RMT, Shrinkage, Black-Litterman）；`MomentConfig` 类型安全估计器框架。
+    -   `black_litterman.py`: Black-Litterman 双公式实现，含 `idzorek_omega()` 置信方法。
+    -   `risk.py`: 风险度量（VaR, ES, OWA, RLVaR, SemiDeviation, SemiVariance）与归因分解。
     -   `meucci.py`: 熵池法与排名算法。
     -   `ml.py` & `dbht.py`: HRP, HERC, NCO 与 DBHT 聚类。
     -   `portfolio.py`: 组合规格定义与约束管理。
