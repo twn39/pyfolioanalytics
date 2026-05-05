@@ -82,19 +82,4 @@
 7. **[回测与可视化 (Backtesting & Plots)](docs/backtest_and_plots.md)** - 使用 `backtest.py` 引擎进行带费率的滚动回测，并使用 `plots.py` 生成专业的交互式风险归因图表。
 
 ---
-
-## 📂 项目结构
--   `src/pyfolioanalytics/`:
-    -   `moments.py`: 所有矩估计逻辑（GARCH, RMT, Shrinkage, Black-Litterman）；`MomentConfig` 类型安全估计器框架。
-    -   `black_litterman.py`: Black-Litterman 双公式实现，含 `idzorek_omega()` 置信方法。
-    -   `risk.py`: 风险度量（VaR, ES, OWA, RLVaR, SemiDeviation, SemiVariance）与归因分解。
-    -   `meucci.py`: 熵池法与排名算法。
-    -   `ml.py` & `dbht.py`: HRP, HERC, NCO 与 DBHT 聚类。
-    -   `portfolio.py`: 组合规格定义与约束管理。
-    -   `backtest.py`: 调仓回测引擎。
-    -   `solvers.py`: CVXPY, SciPy, CLA 求解器接口。
--   `scripts/`: 地面真理 (Ground Truth) 生成脚本。
--   `data/`: 交叉验证 JSON 基准与数据集。
-
----
 *量化研究的精准桥梁。*
