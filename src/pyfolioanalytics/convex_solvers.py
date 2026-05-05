@@ -746,9 +746,38 @@ class LPMStrategy(RiskModelStrategy):
         if p == 1:
             return cp.sum(lpm) / T
         elif p == 2:
-            return cp.norm(lpm, 2) / np.sqrt(T - 1)
+            # Denominator ÷T (full-sample mean) matches LPM(method="full") and
+            # R PerformanceAnalytics DownsideDeviation(method="full").
+            # Bug-fix: previous code used ÷√(T-1) which is inconsistent with
+            # the scalar LPM() evaluator after the T-1 correction was removed.
+            return cp.norm(lpm, 2) / np.sqrt(T)
         else:
             raise ValueError("Convex LPM currently only supports p=1 (Omega) or p=2 (Sortino).")
+
+
+class SemiStdDevStrategy(RiskModelStrategy):
+    """Minimise portfolio SemiDeviation (downside standard deviation).
+
+    Convex reformulation of
+        SemiDeviation = sqrt( sum(max(MAR - r_t, 0)^2) / T )
+
+    This is a direct named interface for LPM(p=2, method="full") that exposes
+    a ``mar`` argument (instead of the generic ``rf``) for clarity.
+
+    Matches Riskfolio-Lib's ``SemiDev`` risk measure.
+    """
+
+    def build(self, optimizer: ConvexOptimizer, arguments: dict[str, Any]) -> cp.Expression:
+        if optimizer.R is None:
+            raise ValueError("SemiStdDev requires historical returns R.")
+        T = optimizer.T
+        # Accept either 'mar' (semantic) or 'rf' (generic) as the target
+        mar = arguments.get("mar", arguments.get("rf", 0.0))
+
+        d = cp.Variable(T, nonneg=True)
+        optimizer.add_constraint(d >= mar - optimizer.R @ optimizer.w)
+        # sqrt(||d||_2^2 / T) = ||d||_2 / sqrt(T)
+        return cp.norm(d, 2) / np.sqrt(T)
 
 RISK_STRATEGIES["LPM"] = LPMStrategy
 RISK_STRATEGIES["UCI"] = UlcerIndexStrategy
@@ -757,3 +786,8 @@ RISK_STRATEGIES["RLDaR"] = RLDaRStrategy
 RISK_STRATEGIES["CVaR"] = CVaRStrategy
 RISK_STRATEGIES["ES"] = CVaRStrategy
 RISK_STRATEGIES["CDaR"] = CDaRStrategy
+# SemiDeviation family: named aliases for LPM(p=2) with consistent ÷T denominator
+RISK_STRATEGIES["SemiStdDev"] = SemiStdDevStrategy
+RISK_STRATEGIES["SemiDeviation"] = SemiStdDevStrategy   # long-form alias
+RISK_STRATEGIES["SemiVariance"] = SemiStdDevStrategy    # variance-scale; optimising StdDev is equivalent
+RISK_STRATEGIES["Sortino"] = SemiStdDevStrategy         # Sortino denominator measure

@@ -8,6 +8,7 @@ from .plots import (
     plot_weights,
 )
 from .portfolio import MultLayerPortfolio, Portfolio, SubPortfolioConfig
+from .risk import LPM, SemiDeviation, SemiVariance
 
 __all__ = [
     "Portfolio",
@@ -21,4 +22,8 @@ __all__ = [
     "plot_risk_decomposition",
     "plot_performance",
     "plot_dendrogram",
+    # Risk measures
+    "LPM",
+    "SemiDeviation",
+    "SemiVariance",
 ]

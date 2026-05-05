@@ -287,21 +287,161 @@ def EDaR(weights: np.ndarray, R: np.ndarray, p: float = 0.95) -> float:
     return _solve_evar_scalar(-calculate_drawdowns(p_returns), 1 - p)
 
 
-def LPM(weights: np.ndarray, R: np.ndarray, p: int = 2, rf: float = 0.0) -> float:
+def LPM(
+    weights: np.ndarray,
+    R: np.ndarray,
+    p: int = 2,
+    rf: float = 0.0,
+    method: str = "full",
+) -> float:
+    """Lower Partial Moment (LPM) of order *p*.
+
+    Matches the ``DownsideDeviation`` / ``SemiDeviation`` behaviour of the R
+    ``PerformanceAnalytics`` package exactly.
+
+    Parameters
+    ----------
+    weights:
+        Portfolio weight vector of shape (N,).
+    R:
+        Asset return matrix of shape (T, N).
+    p:
+        LPM order.
+
+        * ``p=1`` — Downside potential (mean shortfall below *rf*).
+          Used as the denominator of the Omega ratio.
+        * ``p=2`` — Downside deviation (square root of semi-variance).
+          Used as the denominator of the Sortino ratio.
+        * ``p≥3`` — Generalised LPM, returned as the *p*-th root of the
+          mean *p*-th power shortfall.
+
+    rf:
+        Minimum Acceptable Return (MAR / target). Defaults to 0.
+
+    method:
+        Denominator convention for ``p=2`` (and ``p=1``).  Matches the
+        ``method`` argument of R ``DownsideDeviation()``:
+
+        * ``"full"``   — divide by **T** (total observations).  This is the
+          default and matches ``SemiDeviation(method="full")`` in R.
+        * ``"subset"`` — divide only by **k**, the count of observations
+          below *rf*.  Matches ``SemiVariance(method="subset")`` in R.
+
+        For ``p≥3`` the ``method`` argument has no effect and the mean
+        over the full sample is always used.
+
+    Returns
+    -------
+    float
+        LPM value.  For ``p=2`` with ``method="full"`` this equals the
+        downside standard deviation (annualise externally).
+
+    Notes
+    -----
+    The previous implementation used ``T-1`` (Bessel correction) for ``p=2``,
+    which matches neither R's ``"full"`` (÷T) nor ``"subset"`` (÷k) convention.
+    That denominator choice has been removed.
     """
-    Lower Partial Moment of order p.
-    p=1 corresponds to Expected Shortfall below target (Omega Ratio denominator).
-    p=2 corresponds to Semi-Variance (Sortino Ratio denominator).
-    """
-    p_returns = np.dot(R, weights)
-    shortfall = np.maximum(rf - p_returns, 0)
-    
+    p_returns: np.ndarray = np.dot(R, weights)
+    T: int = len(p_returns)
+    shortfall: np.ndarray = np.maximum(rf - p_returns, 0)
+
+    # Number of observations that fall below the MAR (used by "subset" method)
+    k: int = int(np.sum(shortfall > 0))
+
     if p == 1:
-        return float(np.mean(shortfall))
+        # Downside potential = mean absolute shortfall below rf
+        # "full"  : divide by T   (matches R DownsideDeviation potential=TRUE)
+        # "subset": divide by k   (observations below MAR only)
+        denom = T if method == "full" else max(k, 1)
+        return float(np.sum(shortfall) / denom)
+
     elif p == 2:
-        return float(np.sqrt(np.sum(shortfall ** 2) / (len(p_returns) - 1)))
+        # Downside deviation = sqrt(semi-variance)
+        # "full"   → ÷T   : SemiDeviation(method="full")   in R PerformanceAnalytics
+        # "subset" → ÷k   : SemiVariance (method="subset") in R PerformanceAnalytics
+        # ❌ old: ÷(T-1)  (Bessel correction — does not match either R convention)
+        denom = T if method == "full" else max(k, 1)
+        return float(np.sqrt(np.sum(shortfall**2) / denom))
+
     else:
-        return float(np.mean(shortfall ** p) ** (1/p))
+        # Generalised LPM: (E[max(rf-r, 0)^p])^(1/p)
+        # Always uses the full-sample mean regardless of `method`.
+        return float(np.mean(shortfall**p) ** (1 / p))
+
+
+def SemiDeviation(
+    weights: np.ndarray,
+    R: np.ndarray,
+    rf: float = 0.0,
+) -> float:
+    """Downside deviation (square-root of semi-variance) below *rf*.
+
+    Equivalent to ``LPM(weights, R, p=2, rf=rf, method="full")``, which
+    matches ``DownsideDeviation(method="full")`` in R ``PerformanceAnalytics``:
+
+        SemiDeviation = sqrt( sum(max(rf - r_t, 0)^2) / T )
+
+    This is the denominator of the Sortino ratio when ``rf = MAR``.
+
+    Parameters
+    ----------
+    weights:
+        Portfolio weight vector of shape (N,).
+    R:
+        Asset return matrix of shape (T, N).
+    rf:
+        Minimum Acceptable Return (MAR).  Defaults to 0.
+
+    Returns
+    -------
+    float
+        Annualise the result externally if needed.
+
+    See Also
+    --------
+    SemiVariance : uses the ``"subset"`` (÷k) convention instead.
+    LPM : general Lower Partial Moment of any order with explicit method control.
+    """
+    return LPM(weights, R, p=2, rf=rf, method="full")
+
+
+def SemiVariance(
+    weights: np.ndarray,
+    R: np.ndarray,
+    rf: float = 0.0,
+) -> float:
+    """Semi-variance below *rf* (squared downside deviation).
+
+    Equivalent to ``LPM(weights, R, p=2, rf=rf, method="subset") ** 2``,
+    which matches ``SemiVariance(method="subset")`` in R
+    ``PerformanceAnalytics``:
+
+        SemiVariance = sum(max(rf - r_t, 0)^2) / k
+
+    where *k* is the number of observations that fall below *rf*.
+
+    Parameters
+    ----------
+    weights:
+        Portfolio weight vector of shape (N,).
+    R:
+        Asset return matrix of shape (T, N).
+    rf:
+        Minimum Acceptable Return (MAR).  Defaults to 0.
+
+    Returns
+    -------
+    float
+        The variance-scale semi-risk measure (not annualised).
+
+    See Also
+    --------
+    SemiDeviation : square root version using the ``"full"`` (÷T) convention.
+    LPM : general Lower Partial Moment of any order with explicit method control.
+    """
+    downside_dev = LPM(weights, R, p=2, rf=rf, method="subset")
+    return float(downside_dev**2)
 
 
 def UCI(weights: np.ndarray, R: np.ndarray, **kwargs) -> float:
@@ -420,11 +560,17 @@ def owa_l_moment_crm_weights(
             phis.append(e / math.factorial(i + 1))
         phis = np.array(phis)
         phis = phis / np.sum(phis)
-        a = ws @ phis.reshape(-1, 1)
-        w = a.flatten()[::-1]
-        for i in range(1, len(w)):
-            w[i] = np.min(w[: i + 1])
-        return w
+        a = ws @ phis.reshape(-1, 1)          # shape (T, 1)
+
+        # Monotonise via prefix-max (cummax) so the OWA weight vector is
+        # non-decreasing — matching Riskfolio-Lib owa_l_moment_crm() exactly.
+        # Bug-fix: previous code applied [::-1] reversal then prefix-min,
+        # which produced a non-increasing (i.e. wrong-direction) vector.
+        w = np.zeros_like(a)
+        w[0] = a[0]
+        for i in range(1, len(a)):
+            w[i, 0] = np.max(a[: i + 1, 0])
+        return w.flatten()
 
     else:
         theta = cp.Variable((T, 1))
