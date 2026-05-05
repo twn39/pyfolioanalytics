@@ -15,3 +15,7 @@ wheels/
 # OS files
 .DS_Store
 .coverage
+.ruff_cache
+.pytest_cache
+ANALYSIS_REPORT.md
+

@@ -1,3 +1,5 @@
+import re
+import warnings
 from typing import Any
 
 import numpy as np
@@ -5,6 +7,88 @@ import pandas as pd
 
 from .optimize import optimize_portfolio
 from .portfolio import Portfolio, RegimePortfolio
+
+
+def _infer_periods_per_year(index: pd.DatetimeIndex) -> float:
+    """Infer the annualisation factor (periods per year) from a DatetimeIndex.
+
+    Uses a three-tier fallback strategy:
+    1. ``pd.infer_freq()`` → look up a hard-coded frequency map.
+    2. Median gap between adjacent timestamps → threshold-based mapping.
+    3. Fall back to 252 (daily default) and emit a ``UserWarning``.
+
+    Parameters
+    ----------
+    index:
+        A ``pd.DatetimeIndex`` of at least two elements.
+
+    Returns
+    -------
+    float
+        Periods per year (e.g. 252 for daily, 12 for monthly, 4 for quarterly).
+    """
+    if len(index) < 2:
+        return 252.0
+
+    # ── Tier 1: pd.infer_freq ────────────────────────────────────────────────
+    freq_str: str | None = pd.infer_freq(index)
+    if freq_str is not None:
+        m = re.match(r"^(\d+)?(.*)", freq_str.upper())
+        multiplier = int(m.group(1)) if m and m.group(1) else 1
+        base = (m.group(2) if m else freq_str).upper()
+
+        _FREQ_MAP: dict[str, float] = {
+            # Sub-daily / daily
+            "H": 252.0 * 6.5, "T": 252.0 * 6.5 * 60,
+            "D": 365.0, "B": 252.0, "C": 252.0,
+            # Weekly (all day-of-week anchors)
+            **{f"W-{d}": 52.0
+               for d in ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]},
+            "W": 52.0,
+            # Monthly
+            "ME": 12.0, "M": 12.0, "MS": 12.0,
+            "BME": 12.0, "BMS": 12.0, "CBME": 12.0,
+            # Quarterly (all month-end anchors)
+            **{f"QE-{mo}": 4.0
+               for mo in ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]},
+            "QE": 4.0, "Q": 4.0, "QS": 4.0, "BQS": 4.0, "BQE": 4.0,
+            # Annual
+            "YE": 1.0, "Y": 1.0, "YS": 1.0,
+            "A": 1.0, "BY": 1.0, "BA": 1.0, "AS": 1.0,
+        }
+        if base in _FREQ_MAP:
+            return _FREQ_MAP[base] / multiplier
+
+    # ── Tier 2: median inter-observation gap ────────────────────────────────
+    try:
+        median_days = float(
+            np.median(np.diff(index).astype("timedelta64[D]").astype(float))
+        )
+        if median_days < 2:
+            return 252.0    # intraday / daily
+        elif median_days < 8:
+            return 52.0     # weekly
+        elif median_days < 35:
+            return 12.0     # monthly
+        elif median_days < 100:
+            return 4.0      # quarterly
+        elif median_days < 200:
+            return 2.0      # semi-annual
+        else:
+            return 1.0      # annual
+    except Exception:
+        pass
+
+    # ── Tier 3: fall back to daily ────────────────────────────────────────
+    warnings.warn(
+        "Could not infer data frequency from the DatetimeIndex; "
+        "defaulting to 252 (daily). "
+        "Pass `periods_per_year` explicitly to silence this warning.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return 252.0
 
 
 class BacktestResult:
@@ -28,12 +112,39 @@ class BacktestResult:
         self.net_returns = net_returns if net_returns is not None else returns.copy()
 
     def summary(
-        self, risk_free_rate: float = 0.0, benchmark_returns: pd.Series | None = None
+        self,
+        risk_free_rate: float = 0.0,
+        benchmark_returns: pd.Series | None = None,
+        periods_per_year: float | None = None,
     ) -> pd.DataFrame:
         """
-        Calculate key performance and risk metrics (Tearsheet) for the backtest.
-        Returns a DataFrame comparing Gross vs Net returns.
+        Calculate key performance and risk metrics (tearsheet) for the backtest.
+
+        Parameters
+        ----------
+        risk_free_rate:
+            Annualised risk-free rate (e.g. 0.02 for 2 %). Used to compute
+            Sharpe and Sortino ratios.
+        benchmark_returns:
+            Optional benchmark return series for tracking-error and
+            capture-ratio calculations.
+        periods_per_year:
+            Annualisation factor (number of return observations per year).
+            Typical values: 252 (daily), 52 (weekly), 12 (monthly), 4 (quarterly).
+            When ``None`` (default) the factor is inferred automatically from
+            the index of the return series via :func:`_infer_periods_per_year`.
         """
+        # ── Annualisation factor ─────────────────────────────────────────────
+        if periods_per_year is not None:
+            ppy = float(periods_per_year)
+        elif (
+            not self.returns.empty
+            and isinstance(self.returns.index, pd.DatetimeIndex)
+        ):
+            ppy = _infer_periods_per_year(self.returns.index)
+        else:
+            ppy = 252.0
+
         metrics = {}
 
         for ret_type, ret_series in [
@@ -43,29 +154,25 @@ class BacktestResult:
             if ret_series.empty:
                 continue
 
-            # Basic stats
-            # Assuming daily returns for annualized factors if not specified,
-            # ideally we should infer freq from index, but 252 is standard for daily trading
-            # We'll calculate total return first to be safe
             cum_ret = (1 + ret_series).prod() - 1
-            n_days = len(ret_series)
-            cagr = (1 + cum_ret) ** (252 / max(1, n_days)) - 1
+            n_obs = len(ret_series)
+            cagr = (1 + cum_ret) ** (ppy / max(1, n_obs)) - 1
 
-            ann_vol = ret_series.std() * np.sqrt(252)
+            ann_vol = ret_series.std() * np.sqrt(ppy)
 
             # Sharpe Ratio
-            excess_ret = ret_series - (risk_free_rate / 252)
+            excess_ret = ret_series - (risk_free_rate / ppy)
             sharpe = (
-                (excess_ret.mean() / ret_series.std()) * np.sqrt(252)
+                (excess_ret.mean() / ret_series.std()) * np.sqrt(ppy)
                 if ret_series.std() > 0
                 else np.nan
             )
 
             # Sortino Ratio
             downside_ret = ret_series[ret_series < 0]
-            downside_vol = downside_ret.std() * np.sqrt(252)
+            downside_vol = downside_ret.std() * np.sqrt(ppy)
             sortino = (
-                (excess_ret.mean() * np.sqrt(252)) / downside_vol
+                (excess_ret.mean() * np.sqrt(ppy)) / downside_vol
                 if downside_vol > 0
                 else np.nan
             )
@@ -105,7 +212,7 @@ class BacktestResult:
 
             # Hit Ratios
             positive_periods = (ret_series > 0).sum()
-            hit_ratio = positive_periods / n_days if n_days > 0 else np.nan
+            hit_ratio = positive_periods / n_obs if n_obs > 0 else np.nan
 
             # Relative metrics if benchmark provided
             info_ratio = np.nan
@@ -121,9 +228,9 @@ class BacktestResult:
                     bench_a = aligned.iloc[:, 1]
 
                     active_ret = ret_a - bench_a
-                    tracking_error = active_ret.std() * np.sqrt(252)
+                    tracking_error = active_ret.std() * np.sqrt(ppy)
                     if tracking_error > 0:
-                        info_ratio = (active_ret.mean() * 252) / tracking_error
+                        info_ratio = (active_ret.mean() * ppy) / tracking_error
 
                     # Capture Ratios
                     up_market = bench_a > 0
@@ -131,19 +238,19 @@ class BacktestResult:
 
                     if up_market.any():
                         r_up = (1 + ret_a[up_market]).prod() ** (
-                            252 / up_market.sum()
+                            ppy / up_market.sum()
                         ) - 1
                         b_up = (1 + bench_a[up_market]).prod() ** (
-                            252 / up_market.sum()
+                            ppy / up_market.sum()
                         ) - 1
                         up_capture = r_up / b_up if b_up > 0 else np.nan
 
                     if down_market.any():
                         r_down = (1 + ret_a[down_market]).prod() ** (
-                            252 / down_market.sum()
+                            ppy / down_market.sum()
                         ) - 1
                         b_down = (1 + bench_a[down_market]).prod() ** (
-                            252 / down_market.sum()
+                            ppy / down_market.sum()
                         ) - 1
                         down_capture = r_down / b_down if b_down < 0 else np.nan
 
@@ -251,7 +358,11 @@ def backtest_portfolio(
 
     nav = initial_aum
     hwm = initial_aum
-    daily_mgt_fee_rate = management_fee / 252.0
+    # Infer annualisation factor once from the full return index so that
+    # management-fee deductions are scaled to the actual data frequency
+    # (e.g. 1%/year → 1/12 % per month for monthly data, not 1/252 % per day).
+    _ppy = _infer_periods_per_year(R.index)
+    per_period_mgt_fee_rate = management_fee / _ppy
 
     for i in range(len(rebal_dates) - 1):
         start_date = rebal_dates[i]
@@ -346,12 +457,12 @@ def backtest_portfolio(
         nav_trajectory = np.zeros(T)
         
         nav_after_ptc = nav * (1.0 - turnover_val * ptc)
-        nav_trajectory[0] = nav_after_ptc * (1.0 + port_ret_array[0]) * (1.0 - daily_mgt_fee_rate)
-        
+        nav_trajectory[0] = nav_after_ptc * (1.0 + port_ret_array[0]) * (1.0 - per_period_mgt_fee_rate)
+
         # Cumulative compounding for the rest of the period
         if T > 1:
-            net_daily_growth = (1.0 + port_ret_array[1:]) * (1.0 - daily_mgt_fee_rate)
-            nav_trajectory[1:] = nav_trajectory[0] * np.cumprod(net_daily_growth)
+            net_period_growth = (1.0 + port_ret_array[1:]) * (1.0 - per_period_mgt_fee_rate)
+            nav_trajectory[1:] = nav_trajectory[0] * np.cumprod(net_period_growth)
             
         # Apply Performance Fee on the last day of the period
         if performance_fee > 0:

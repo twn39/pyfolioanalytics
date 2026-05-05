@@ -464,3 +464,210 @@ def solve_cla(
         weights = cla.min_volatility()
 
     return {"status": "optimal", "weights": weights, "cla_object": cla}
+
+
+# ── MILP Cardinality Solver ────────────────────────────────────────────────────
+
+# Risk-measure names that MILP cardinality solver can handle.
+# Measures not in this set require exponential/power cones that HiGHS cannot
+# solve; those will fall back to the two-step heuristic in optimize.py.
+_MILP_SUPPORTED_RISKS: frozenset[str] = frozenset(
+    {"STDDEV", "VARIANCE", "MV", "CVAR", "ES", "MAD", "SEMIVARIANCE", "SEMISTDDEV"}
+)
+
+
+def solve_milp_cardinality(
+    moments: dict[str, Any],
+    constraints: dict[str, Any],
+    objectives: list[dict[str, Any]],
+    max_pos: int,
+    R: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Exact cardinality-constrained portfolio optimisation via MILP/MIQP.
+
+    Introduces binary selection variables ``z_i ∈ {0,1}`` (z_i = 1 means
+    asset i is held) and big-M linking constraints to enforce
+    ``sum(z_i) <= max_pos`` exactly.  The resulting mixed-integer problem is
+    solved by HiGHS (already a project dependency) via CVXPY.
+
+    Supported risk objectives: StdDev / Variance, CVaR / ES, MAD, SemiVar.
+    Unsupported objectives (EVaR, RLVaR, …) return ``{'weights': None}`` so
+    that the caller can fall back to the two-step heuristic.
+
+    Parameters
+    ----------
+    moments:
+        Dict with keys ``'mu'`` (N,) and ``'sigma'`` (N, N).
+    constraints:
+        Standard constraints dict produced by ``Portfolio.get_constraints()``.
+    objectives:
+        List of objective dicts (same format as ``ConvexOptimizer``).
+    max_pos:
+        Maximum number of non-zero positions.
+    R:
+        Historical returns array (T, N).  Required for CVaR / MAD objectives.
+
+    Returns
+    -------
+    dict
+        ``{'status': str, 'weights': ndarray | None, 'obj_value': float | None,
+           'n_positions': int | None}``.
+        ``weights`` is ``None`` if the solver failed or the risk type is
+        unsupported (caller should fall back).
+    """
+    n = len(moments["mu"])
+    mu = np.asarray(moments["mu"]).flatten()
+    sigma = np.asarray(moments["sigma"])
+
+    lb = constraints["min"].values.astype(float)
+    ub = constraints["max"].values.astype(float)
+    min_sum = float(constraints["min_sum"])
+    max_sum = float(constraints["max_sum"])
+
+    # ── Identify risk objective ────────────────────────────────────────────────
+    risk_obj = next((o for o in objectives if o.get("type") == "risk"), None)
+    risk_name = (risk_obj.get("name", "StdDev") if risk_obj else "StdDev").upper()
+
+    # Fast-exit for unsupported cones — caller will fall back to heuristic
+    if risk_name not in _MILP_SUPPORTED_RISKS:
+        return {
+            "status": "unsupported_risk",
+            "weights": None,
+            "obj_value": None,
+            "n_positions": None,
+        }
+
+    # ── CVXPY variables ────────────────────────────────────────────────────────
+    w = cp.Variable(n, name="weights")
+    z = cp.Variable(n, boolean=True, name="selected")
+
+    # ── Constraints ───────────────────────────────────────────────────────────
+    cvx_cons: list = []
+
+    # 1. Weight sum
+    if abs(min_sum - max_sum) < 1e-8:
+        cvx_cons.append(cp.sum(w) == min_sum)
+    else:
+        cvx_cons.append(cp.sum(w) >= min_sum)
+        cvx_cons.append(cp.sum(w) <= max_sum)
+
+    # 2. Big-M linking: w_i ∈ [lb_i * z_i,  ub_i * z_i]
+    #    Use cp.multiply() for elementwise multiplication (not *, which CVXPY
+    #    1.1+ treats as matrix multiplication and raises a DeprecationWarning).
+    #    Using the weight bounds as M avoids artificially large M values, which
+    #    would cause numerical ill-conditioning.
+    cvx_cons.append(w <= cp.multiply(ub, z))
+    if np.any(lb > 1e-12):
+        cvx_cons.append(w >= cp.multiply(lb, z))
+    else:
+        cvx_cons.append(w >= 0.0)
+
+    # 3. Cardinality (core constraint)
+    cvx_cons.append(cp.sum(z) <= max_pos)
+
+    # 4. Pass-through: custom linear constraints
+    if "linear_A" in constraints and "linear_b" in constraints:
+        for A, b in zip(constraints["linear_A"], constraints["linear_b"]):
+            cvx_cons.append(np.asarray(A) @ w <= float(b))
+    if "linear_A_eq" in constraints and "linear_b_eq" in constraints:
+        for A_eq, b_eq in zip(constraints["linear_A_eq"], constraints["linear_b_eq"]):
+            cvx_cons.append(np.asarray(A_eq) @ w == float(b_eq))
+
+    # ── Objective ─────────────────────────────────────────────────────────────
+    args = risk_obj.get("arguments", {}) if risk_obj else {}
+
+    if risk_name in ("STDDEV", "VARIANCE", "MV"):
+        # Minimise portfolio variance (MIQP).  CVXPY + HiGHS handles this via
+        # branch-and-bound on the continuous relaxation.
+        objective = cp.Minimize(cp.quad_form(w, sigma))
+
+    elif risk_name in ("CVAR", "ES"):
+        if R is None:
+            return {
+                "status": "failed",
+                "weights": None,
+                "obj_value": None,
+                "n_positions": None,
+            }
+        alpha = float(args.get("alpha", 0.05))
+        T = R.shape[0]
+        u = cp.Variable(T, nonneg=True, name="cvar_u")
+        xi = cp.Variable(name="cvar_xi")
+        cvx_cons += [u >= -R @ w - xi]
+        objective = cp.Minimize(xi + cp.sum(u) / (alpha * T))
+
+    elif risk_name == "MAD":
+        if R is None:
+            return {
+                "status": "failed",
+                "weights": None,
+                "obj_value": None,
+                "n_positions": None,
+            }
+        T = R.shape[0]
+        mu_r = R.mean(axis=0)          # shape (N,)
+        mu_port = mu_r @ w             # scalar CVXPY expression
+        R_w = R @ w                    # shape (T,) CVXPY expression
+        mad_u = cp.Variable(T, nonneg=True, name="mad_u")
+        cvx_cons += [mad_u >= R_w - mu_port, mad_u >= -(R_w - mu_port)]
+        objective = cp.Minimize(cp.sum(mad_u) / T)
+
+    elif risk_name in ("SEMIVARIANCE", "SEMISTDDEV"):
+        # Minimise downside semi-variance
+        target = float(args.get("target", float(mu.mean())))
+        if R is not None:
+            T = R.shape[0]
+            d = cp.Variable(T, nonneg=True, name="semi_d")
+            cvx_cons += [d >= target - R @ w]
+            objective = cp.Minimize(cp.sum_squares(d) / T)
+        else:
+            # Approximate with Sigma-based lower semi-variance (Hogan-Warren)
+            objective = cp.Minimize(cp.quad_form(w, sigma))
+
+    else:
+        # Unreachable given the guard above, but be explicit
+        return {
+            "status": "unsupported_risk",
+            "weights": None,
+            "obj_value": None,
+            "n_positions": None,
+        }
+
+    # ── Solve ─────────────────────────────────────────────────────────────────
+    prob = cp.Problem(objective, cvx_cons)
+
+    # Solver preference: HiGHS first (open-source, always available),
+    # then commercial solvers if the user has them installed.
+    _SOLVERS = ["HIGHS", "GUROBI", "CPLEX", "MOSEK", "SCIP"]
+    for solver_name in _SOLVERS:
+        try:
+            prob.solve(solver=solver_name, verbose=False)
+            if w.value is not None:
+                break
+        except (cp.error.SolverError, Exception):
+            continue
+
+    if w.value is None or prob.status in ("infeasible", "unbounded"):
+        return {
+            "status": prob.status or "failed",
+            "weights": None,
+            "obj_value": None,
+            "n_positions": None,
+        }
+
+    # ── Post-processing ───────────────────────────────────────────────────────
+    # Clip near-zero weights (MIQP/MILP solvers can leave small numerical residuals)
+    w_out = w.value.copy()
+    w_out[np.abs(w_out) < 1e-6] = 0.0
+
+    # Re-normalise if fully-invested (sum-to-one) to correct tiny rounding errors
+    w_sum = float(np.sum(w_out))
+    if w_sum > 1e-10 and abs(min_sum - max_sum) < 1e-8:
+        w_out = w_out / w_sum * min_sum
+
+    return {
+        "status": "optimal",
+        "weights": w_out,
+        "obj_value": float(prob.value) if prob.value is not None else None,
+        "n_positions": int(np.sum(w_out > 1e-6)),
+    }

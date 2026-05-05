@@ -399,41 +399,60 @@ def optimize_portfolio(
         if risk_name in RISK_STRATEGIES or risk_name in ["var"]:
             max_pos = constraints.get("max_pos")
             assets_keys = list(portfolio.assets.keys())
+            R_values = R.values if R is not None else None
+
             if max_pos is not None and max_pos < len(assets_keys):
-                opt = ConvexOptimizer(
-                    moments, constraints, opt_objs, R=R.values if R is not None else None, **kwargs
+                # ── Primary path: exact MILP cardinality solver ───────────────
+                # Supported risk types (StdDev, CVaR, MAD, SemiVar) are solved
+                # exactly via branch-and-bound (CVXPY + HiGHS).  Unsupported
+                # cone types (EVaR, RLVaR, …) return weights=None and we fall
+                # through to the two-step heuristic below.
+                from .solvers import solve_milp_cardinality
+                result = solve_milp_cardinality(
+                    moments, constraints, opt_objs,
+                    max_pos=max_pos, R=R_values,
                 )
-                relaxed_result = opt.solve()
-                
-                if relaxed_result.get("status") in ["optimal", "optimal_inaccurate"]:
-                    w_relaxed = relaxed_result["weights"]
-                    top_indices = np.argsort(w_relaxed)[-max_pos:]
-                    
-                    locked_constraints = constraints.copy()
-                    locked_max = locked_constraints["max"].copy()
-                    locked_min = locked_constraints["min"].copy()
-                    
-                    mask = np.ones(len(assets_keys), dtype=bool)
-                    mask[top_indices] = False
-                    
-                    locked_max.iloc[mask] = locked_min.iloc[mask]
-                    locked_constraints["max"] = locked_max
-                    
-                    opt_locked = ConvexOptimizer(
-                        moments, locked_constraints, opt_objs, R=R.values if R is not None else None, **kwargs
+
+                # ── Fallback path: two-step heuristic ────────────────────────
+                # Triggered when MILP solver cannot handle the risk type or
+                # encounters a numerical failure.
+                if result.get("weights") is None:
+                    opt = ConvexOptimizer(
+                        moments, constraints, opt_objs,
+                        R=R_values, **kwargs,
                     )
-                    result = opt_locked.solve()
-                else:
-                    result = relaxed_result
+                    relaxed_result = opt.solve()
+
+                    if relaxed_result.get("status") in ["optimal", "optimal_inaccurate"]:
+                        w_relaxed = relaxed_result["weights"]
+                        top_indices = np.argsort(w_relaxed)[-max_pos:]
+
+                        locked_constraints = constraints.copy()
+                        locked_max = locked_constraints["max"].copy()
+                        locked_min = locked_constraints["min"].copy()
+
+                        mask = np.ones(len(assets_keys), dtype=bool)
+                        mask[top_indices] = False
+                        locked_max.iloc[mask] = locked_min.iloc[mask]
+                        locked_constraints["max"] = locked_max
+
+                        opt_locked = ConvexOptimizer(
+                            moments, locked_constraints, opt_objs,
+                            R=R_values, **kwargs,
+                        )
+                        result = opt_locked.solve()
+                    else:
+                        result = relaxed_result
             else:
                 opt = ConvexOptimizer(
                     moments,
                     constraints,
                     opt_objs,
-                    R=R.values if R is not None else None,
+                    R=R_values,
                     **kwargs,
                 )
                 result = opt.solve()
+
 
     if result is None:
         if optimize_method in ["DEoptim", "GenSA", "PSO"]:
