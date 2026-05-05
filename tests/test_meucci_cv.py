@@ -1,11 +1,13 @@
-import pandas as pd
 import json
+
 import numpy as np
-from pyfolioanalytics.meucci import entropy_prog, meucci_ranking, centroid_ranking
+import pandas as pd
+
+from pyfolioanalytics.meucci import centroid_ranking, entropy_prog, meucci_ranking
 
 
 def load_cv_data():
-    with open("data/meucci_cv.json", "r") as f:
+    with open("data/meucci_cv.json") as f:
         return json.load(f)
 
 

@@ -20,7 +20,6 @@ from pyfolioanalytics.optimize import optimize_portfolio
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.risk import hhi
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 1.  hhi() — pure unit tests
 # ──────────────────────────────────────────────────────────────────────────────
@@ -371,8 +370,8 @@ class TestFromRIndex:
 class TestDimensionMismatchFallback:
     def test_mismatch_emits_warning(self, stocks_data):
         """A manually constructed bad objective should trigger the fallback warning."""
-        from pyfolioanalytics.solvers import create_penalized_objective
         from pyfolioanalytics.moments import set_portfolio_moments
+        from pyfolioanalytics.solvers import create_penalized_objective
 
         p = Portfolio(assets=stocks_data.columns.tolist())
         p.add_constraint(type="full_investment")

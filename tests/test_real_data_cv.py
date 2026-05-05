@@ -1,7 +1,9 @@
+import json
+
 import numpy as np
 import pandas as pd
-import json
-from pyfolioanalytics.moments import set_portfolio_moments, M3_SFM, M4_SFM
+
+from pyfolioanalytics.moments import M3_SFM, M4_SFM, set_portfolio_moments
 from pyfolioanalytics.portfolio import Portfolio
 
 
@@ -17,7 +19,7 @@ def test_real_data_advanced_moments_cv():
     ]
     R_sub = edhec[asset_names]
 
-    with open("data/real_data_cv.json", "r") as f:
+    with open("data/real_data_cv.json") as f:
         cv_data = json.load(f)
 
     port = Portfolio(assets=asset_names)

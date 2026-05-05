@@ -1,7 +1,8 @@
 import numpy as np
 import riskfolio as rp
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.moments import set_portfolio_moments
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_shrinkage_identity_cv(stocks_data):

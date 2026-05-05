@@ -307,7 +307,7 @@ def backtest_portfolio(
     initial_aum = kwargs.get("initial_aum", 1.0)
     management_fee = kwargs.get("management_fee", 0.0)
     performance_fee = kwargs.get("performance_fee", 0.0)
-    
+
     # Handle rebalance_on from PortfolioAnalytics style
     rebalance_on = kwargs.get("rebalance_on")
     if rebalance_on:
@@ -335,7 +335,7 @@ def backtest_portfolio(
 
     # Identify all potential rebalancing dates
     raw_rebal_dates = pd.date_range(start=R.index[0], end=R.index[-1], freq=rebalance_periods)
-    
+
     # Filter dates to respect training_period and ensure we cover the very end
     rebal_dates = raw_rebal_dates[raw_rebal_dates >= valid_start_date]
     if len(rebal_dates) == 0 or rebal_dates[0] > valid_start_date:
@@ -409,35 +409,35 @@ def backtest_portfolio(
 
         # 1. Turnover at rebalance
         turnover_val = np.abs(current_weights - last_eop_weights).sum() / 2.0
-        
+
         # 2. Vectorized Drift and NAV Calculation
         T, N = R_period.shape
         R_vals = R_period.values
         w = current_weights.values
-        
+
         # Calculate daily growth factor for each asset: (1 + R_i,t)
         asset_growth = 1.0 + R_vals
-        
+
         # Cumulative growth of each asset over the period
         cum_asset_growth = np.cumprod(asset_growth, axis=0)
-        
+
         # Value of each asset over time, assuming we start with $w allocation
         value_matrix = w.reshape(1, N) * cum_asset_growth
-        
+
         # Total portfolio value over time (relative to starting $1)
         port_rel_value = np.sum(value_matrix, axis=1)
-        
+
         # EOP Weights = current value of asset / total portfolio value
         with np.errstate(divide='ignore', invalid='ignore'):
             eop_weights_matrix = value_matrix / port_rel_value.reshape(-1, 1)
             eop_weights_matrix[port_rel_value == 0] = 0.0
-        
+
         # BOP Weights: first day is target `w`, subsequent days are previous day's EOP
         bop_weights_matrix = np.zeros_like(eop_weights_matrix)
         bop_weights_matrix[0, :] = w
         if T > 1:
             bop_weights_matrix[1:, :] = eop_weights_matrix[:-1, :]
-            
+
         # Portfolio Gross Returns: V_t / V_{t-1} - 1
         port_ret_array = np.zeros(T)
         port_ret_array[0] = np.dot(w, R_vals[0])
@@ -445,17 +445,17 @@ def backtest_portfolio(
             with np.errstate(divide='ignore', invalid='ignore'):
                 port_ret_array[1:] = (port_rel_value[1:] / port_rel_value[:-1]) - 1.0
             port_ret_array[1:][port_rel_value[:-1] == 0] = 0.0
-            
+
         # NAV and Net Returns tracking
         net_ret_array = np.zeros(T)
         turnover_array = np.zeros(T)
         turnover_array[0] = turnover_val
-        
+
         # Vectorized NAV calculation
         # The portfolio grows by port_ret_array each day, and shrinks by daily_mgt_fee_rate
         # For the first day, we must apply the turnover PTC drop BEFORE market growth
         nav_trajectory = np.zeros(T)
-        
+
         nav_after_ptc = nav * (1.0 - turnover_val * ptc)
         nav_trajectory[0] = nav_after_ptc * (1.0 + port_ret_array[0]) * (1.0 - per_period_mgt_fee_rate)
 
@@ -463,7 +463,7 @@ def backtest_portfolio(
         if T > 1:
             net_period_growth = (1.0 + port_ret_array[1:]) * (1.0 - per_period_mgt_fee_rate)
             nav_trajectory[1:] = nav_trajectory[0] * np.cumprod(net_period_growth)
-            
+
         # Apply Performance Fee on the last day of the period
         if performance_fee > 0:
             final_nav = nav_trajectory[-1]
@@ -471,14 +471,14 @@ def backtest_portfolio(
                 perf_fee_amount = (final_nav - hwm) * performance_fee
                 nav_trajectory[-1] -= perf_fee_amount
                 hwm = nav_trajectory[-1]
-                
+
         # Calculate Net Returns
         net_ret_array[0] = (nav_trajectory[0] / nav) - 1.0
         if T > 1:
             with np.errstate(divide='ignore', invalid='ignore'):
                 net_ret_array[1:] = (nav_trajectory[1:] / nav_trajectory[:-1]) - 1.0
             net_ret_array[1:][nav_trajectory[:-1] == 0] = 0.0
-            
+
         # Update state for next period
         nav = nav_trajectory[-1]
         last_eop_weights = pd.Series(eop_weights_matrix[-1, :], index=R.columns)

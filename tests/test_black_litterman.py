@@ -20,7 +20,6 @@ from pyfolioanalytics.black_litterman import black_litterman, black_litterman_ti
 from pyfolioanalytics.moments import set_portfolio_moments
 from pyfolioanalytics.portfolio import Portfolio
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ──────────────────────────────────────────────────────────────────────────────

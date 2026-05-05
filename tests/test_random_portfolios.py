@@ -1,4 +1,5 @@
 import numpy as np
+
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.random_portfolios import random_portfolios, rp_transform
 

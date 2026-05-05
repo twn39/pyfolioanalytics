@@ -1,7 +1,8 @@
-import pandas as pd
 import numpy as np
-from pyfolioanalytics.plots import plot_dendrogram
+import pandas as pd
 import plotly.graph_objects as go
+
+from pyfolioanalytics.plots import plot_dendrogram
 
 
 def test_plot_dendrogram():

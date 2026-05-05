@@ -1,6 +1,7 @@
-from dataclasses import dataclass, fields as _dc_fields
-from typing import Any, Protocol, runtime_checkable
 import warnings
+from dataclasses import dataclass
+from dataclasses import fields as _dc_fields
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -8,17 +9,18 @@ from scipy.stats import chi2
 
 from .factors import ac_ranking, factor_model_covariance, statistical_factor_model
 
+
 def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd.DataFrame | np.ndarray:
     """
     Robust return cleaning (Winsorization) using the Boudt et al. (2008) method.
-    Identifies multivariate outliers using Mahalanobis distance based on MCD 
-    (Minimum Covariance Determinant) robust estimates and scales them back to 
+    Identifies multivariate outliers using Mahalanobis distance based on MCD
+    (Minimum Covariance Determinant) robust estimates and scales them back to
     the boundaries of the chi-squared distribution.
     """
     isinstance(R, pd.DataFrame)
     R_vals = R.values if isinstance(R, pd.DataFrame) else np.asarray(R)
     T, N = R_vals.shape
-    
+
     # 1. Robust Mean and Covariance estimation (MCD)
     try:
         from sklearn.covariance import MinCovDet
@@ -33,27 +35,27 @@ def clean_returns_boudt(R: pd.DataFrame | np.ndarray, alpha: float = 0.05) -> pd
         warnings.warn(f"MCD fitting failed ({str(e)}), falling back to sample moments for Boudt cleaning.")
         mu_mcd = np.mean(R_vals, axis=0)
         cov_mcd = np.cov(R_vals, rowvar=False)
-        
+
     # Calculate pseudo-inverse to handle ill-conditioned covariance
     cov_inv = np.linalg.pinv(cov_mcd)
-    
+
     # 2. Squared Mahalanobis Distance D^2
     diff = R_vals - mu_mcd
     # Vectorized computation of (R_t - mu)^T * Sigma^-1 * (R_t - mu)
     D_sq = np.sum(np.dot(diff, cov_inv) * diff, axis=1)
-    
+
     # 3. Chi-Square threshold (df = N assets)
     threshold = chi2.ppf(1 - alpha, df=N)
-    
+
     # 4. Outlier detection and scaling factor computation
     scaling_factors = np.ones(T)
     outliers = D_sq > threshold
     if np.any(outliers):
         scaling_factors[outliers] = np.sqrt(threshold / D_sq[outliers])
-    
+
     # 5. Winsorization (scaling back outliers)
     R_clean = mu_mcd + diff * scaling_factors[:, np.newaxis]
-    
+
     if isinstance(R, pd.DataFrame):
         return pd.DataFrame(R_clean, index=R.index, columns=R.columns)
     return R_clean
@@ -272,7 +274,7 @@ def capm_returns(
     Matches PyPfOpt's capm_return logic strictly.
     """
     returns = R.copy()
-    
+
     if market_returns is not None:
         if isinstance(market_returns, pd.DataFrame):
             market_returns = market_returns.iloc[:, 0]
@@ -291,74 +293,74 @@ def capm_returns(
 
     returns["mkt"] = market_returns
     cov = returns.cov()
-    
+
     # Beta = Cov(R_i, R_m) / Var(R_m)
     if cov.loc["mkt", "mkt"] > 0:
         betas = cov["mkt"] / cov.loc["mkt", "mkt"]
     else:
         betas = pd.Series(0.0, index=returns.columns)
-        
+
     betas = betas.drop("mkt")
 
     # Assuming daily returns, compounding to match PyPfOpt's annualized mkt_mean_ret logic
     # BUT we want to return raw scale to match PyFolioAnalytics API. We use raw means.
     # PyPfOpt allows toggling compounding. We'll stick to raw mean.
     mkt_mean_ret = (1 + returns["mkt"]).prod() ** (1.0 / returns["mkt"].count()) - 1.0
-    
+
     # Expected return = Rf + Beta * (E[Rm] - Rf)
     expected_returns = risk_free_rate + betas * (mkt_mean_ret - risk_free_rate)
-    
+
     return expected_returns.values.reshape(-1, 1)
 
 
 def shrunk_covariance(
-    R: pd.DataFrame, 
-    method: str = "ledoit_wolf", 
+    R: pd.DataFrame,
+    method: str = "ledoit_wolf",
     shrinkage_target: str = "constant_variance"
 ) -> np.ndarray:
     """
     Native implementation of advanced covariance shrinkage (Ledoit-Wolf & OAS).
     """
-    from sklearn.covariance import LedoitWolf, OAS
-    
+    from sklearn.covariance import OAS, LedoitWolf
+
     X = np.nan_to_num(R.values)
     t, n = X.shape
 
     if method == "oas":
         oas = OAS(assume_centered=False).fit(X)
         return oas.covariance_
-        
+
     elif method == "ledoit_wolf":
         if shrinkage_target == "constant_variance":
             # Scikit-learn's default implementation
             lw = LedoitWolf(assume_centered=False).fit(X)
             return lw.covariance_
-            
+
         elif shrinkage_target == "constant_correlation":
             # Native implementation matching Ledoit & Wolf (2003) / PyPfOpt
             S = np.cov(X, rowvar=False)
-            
+
             var = np.diag(S).reshape(-1, 1)
             std = np.sqrt(var)
             _var = np.tile(var, (n,))
             _std = np.tile(std, (n,))
-            
+
             with np.errstate(divide='ignore', invalid='ignore'):
                 cor_mat = S / (_std * _std.T)
                 cor_mat[np.isnan(cor_mat) | np.isinf(cor_mat)] = 0.0
-                
+
             r_bar = (np.sum(cor_mat) - n) / (n * (n - 1)) if n > 1 else 1.0
-            
+
             F = r_bar * (_std * _std.T)
             F[np.eye(n) == 1] = var.reshape(-1)
-            
+
             Xm = X - X.mean(axis=0)
             y = Xm**2
-            
+
             # Estimate pi
             pi_mat = np.dot(y.T, y) / t - 2 * np.dot(Xm.T, Xm) * S / t + S**2
             pi_hat = np.sum(pi_mat)
-            
+
             # Theta matrix, expanded term by term
             term1 = np.dot((Xm**3).T, Xm) / t
             help_ = np.dot(Xm.T, Xm) / t
@@ -366,29 +368,29 @@ def shrunk_covariance(
             term2 = np.tile(help_diag, (n, 1)).T * S
             term3 = help_ * _var
             term4 = _var * S
-            
+
             theta_mat = term1 - term2 - term3 + term4
             theta_mat[np.eye(n) == 1] = np.zeros(n)
-            
+
             with np.errstate(divide='ignore', invalid='ignore'):
                 inv_std = np.where(std > 1e-10, 1.0 / std, 0.0)
-                
+
             rho_hat = np.sum(np.diag(pi_mat)) + r_bar * np.sum(
                 np.dot(inv_std, std.T) * theta_mat
             )
-            
+
             # Estimate gamma
             gamma_hat = np.linalg.norm(S - F, "fro") ** 2
-            
+
             # Compute shrinkage constant
             if gamma_hat < 1e-10:
                 delta = 0.0
             else:
                 kappa_hat = (pi_hat - rho_hat) / gamma_hat
                 delta = max(0.0, min(1.0, kappa_hat / t))
-                
+
             return delta * F + (1.0 - delta) * S
-            
+
         else:
             raise ValueError(f"Unknown shrinkage target: {shrinkage_target}")
     else:

@@ -13,7 +13,6 @@ import pytest
 
 from pyfolioanalytics.black_litterman import black_litterman, idzorek_omega
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
@@ -248,6 +247,7 @@ class TestBlackLittermanIdzorekShorthand:
 class TestMomentConfigIdzorekIntegration:
     def test_config_idzorek_meucci(self, market_data, two_views):
         import pandas as pd
+
         from pyfolioanalytics import Portfolio
         from pyfolioanalytics.moments import MomentConfig, set_portfolio_moments
 
@@ -272,6 +272,7 @@ class TestMomentConfigIdzorekIntegration:
     def test_config_idzorek_matches_direct_call(self, market_data, two_views):
         """MomentConfig path must produce identical results to black_litterman()."""
         import pandas as pd
+
         from pyfolioanalytics import Portfolio
         from pyfolioanalytics.moments import MomentConfig, set_portfolio_moments
 

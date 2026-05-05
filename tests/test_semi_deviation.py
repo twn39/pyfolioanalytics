@@ -12,9 +12,8 @@ import numpy as np
 import pytest
 
 import pyfolioanalytics as pa
-from pyfolioanalytics.risk import LPM, SemiDeviation, SemiVariance
 from pyfolioanalytics.convex_solvers import RISK_STRATEGIES
-
+from pyfolioanalytics.risk import LPM, SemiDeviation, SemiVariance
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 

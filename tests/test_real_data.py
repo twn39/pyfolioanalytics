@@ -1,8 +1,9 @@
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.optimize import optimize_portfolio, create_efficient_frontier
+
 from pyfolioanalytics.backtest import optimize_portfolio_rebalancing
 from pyfolioanalytics.moments import set_portfolio_moments
+from pyfolioanalytics.optimize import create_efficient_frontier, optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_mvo_on_real_data(stock_returns):

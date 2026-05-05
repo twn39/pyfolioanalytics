@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
+
 from pyfolioanalytics.meucci import (
-    meucci_views,
+    entropy_prog,
     meucci_moments,
     meucci_ranking,
-    entropy_prog,
+    meucci_views,
 )
 
 
@@ -66,7 +67,7 @@ def test_meucci_ranking():
 def test_meucci_cv():
     import json
 
-    with open("data/meucci_cv.json", "r") as f:
+    with open("data/meucci_cv.json") as f:
         cv_data = json.load(f)
 
     R_raw = np.array(cv_data["input_R"])

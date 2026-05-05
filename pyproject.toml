@@ -1,6 +1,6 @@
 [project]
 name = "pyfolioanalytics"
-version = "0.3.0"
+version = "0.3.1"
 description = "High-fidelity Python implementation of R PortfolioAnalytics — portfolio optimisation, risk measures, and moment estimation with cross-validated mathematical parity."
 readme = "README.md"
 license = { text = "MIT" }
@@ -53,7 +53,6 @@ source-exclude = [
     "GEMINI.md",
     "data/**",
     "scripts/**",
-    "ANALYSIS_REPORT.md",
 ]
 
 [dependency-groups]

@@ -1,7 +1,8 @@
-import pandas as pd
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio, RegimePortfolio
+import pandas as pd
+
 from pyfolioanalytics.backtest import optimize_portfolio_rebalancing
+from pyfolioanalytics.portfolio import Portfolio, RegimePortfolio
 
 
 def test_optimize_portfolio_rebalancing_basics(stocks_data):

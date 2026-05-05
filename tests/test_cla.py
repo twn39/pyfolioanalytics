@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
 import pytest
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.optimize import optimize_portfolio
+
 from pyfolioanalytics.cla import CLA
 from pyfolioanalytics.moments import set_portfolio_moments
+from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_cla_min_vol():

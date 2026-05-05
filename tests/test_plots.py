@@ -1,12 +1,13 @@
-import pandas as pd
 import numpy as np
-from pyfolioanalytics import (
-    plot_weights,
-    plot_efficient_frontier,
-    plot_risk_decomposition,
-    plot_performance,
-)
+import pandas as pd
 import plotly.graph_objects as go
+
+from pyfolioanalytics import (
+    plot_efficient_frontier,
+    plot_performance,
+    plot_risk_decomposition,
+    plot_weights,
+)
 
 
 def test_plot_weights():

@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_active_share_constraint_smoke():

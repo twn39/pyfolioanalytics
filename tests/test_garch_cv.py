@@ -1,11 +1,13 @@
 import json
+
 import numpy as np
 import pandas as pd
+
 from pyfolioanalytics.moments import ccc_garch_moments
 
 
 def load_cv_data():
-    with open("data/garch_cv.json", "r") as f:
+    with open("data/garch_cv.json") as f:
         return json.load(f)
 
 
@@ -39,8 +41,8 @@ def test_ccc_garch_moments_cv():
 
 
 def test_set_portfolio_moments_garch():
-    from pyfolioanalytics.portfolio import Portfolio
     from pyfolioanalytics.moments import set_portfolio_moments
+    from pyfolioanalytics.portfolio import Portfolio
 
     data = load_cv_data()
     R_df = pd.DataFrame(data["input_R"], columns=["CA", "CTAG", "DS"])

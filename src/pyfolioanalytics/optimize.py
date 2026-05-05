@@ -11,12 +11,12 @@ from .portfolio import Portfolio, SubPortfolioConfig
 from .random_portfolios import random_portfolios
 from .risk import (
     ES,
+    LPM,
     MAD,
+    UCI,
     CDaR,
     EDaR,
     EVaR,
-    LPM,
-    UCI,
     RLDaR,
     RLVaR,
     VaR,
@@ -180,7 +180,7 @@ def _check_returns(R: pd.DataFrame | np.ndarray | None):
         vals = R.values
     else:
         vals = R
-    
+
     if np.isnan(vals).any():
         raise ValueError("Historical returns 'R' contain NaN values. Please clean or impute missing data before optimization.")
     if np.isinf(vals).any():
@@ -191,7 +191,7 @@ def optimize_portfolio(
     R: pd.DataFrame, portfolio: Portfolio | Any, optimize_method: str = "ROI", **kwargs
 ) -> dict[str, Any]:
     _check_returns(R)
-    
+
     # 1. Dispatch Multi-Layer
     if (
         hasattr(portfolio, "sub_portfolios")

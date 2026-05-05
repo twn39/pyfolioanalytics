@@ -1,12 +1,14 @@
 import json
+
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def load_real_cv_data():
-    with open("data/factor_exposure_real_cv.json", "r") as f:
+    with open("data/factor_exposure_real_cv.json") as f:
         return json.load(f)
 
 

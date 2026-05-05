@@ -1,10 +1,12 @@
 import json
-import pandas as pd
-import numpy as np
-import pytest
 import os
-from pyfolioanalytics.portfolio import Portfolio
+
+import numpy as np
+import pandas as pd
+import pytest
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.risk import EVaR
 
 
@@ -39,7 +41,7 @@ def test_multi_dataset_cross_validation():
     if not os.path.exists(data_path):
         pytest.skip(f"Cross-validation ground truth not found at {data_path}")
 
-    with open(data_path, "r") as f:
+    with open(data_path) as f:
         all_r_results = json.load(f)
 
     for ds_name in ["edhec", "stocks", "macro"]:

@@ -1,13 +1,15 @@
+import json
+
 import numpy as np
 import pandas as pd
-import json
-from pyfolioanalytics.risk import owa_l_moment_weights, l_moment
+
 from pyfolioanalytics.moments import set_portfolio_moments
 from pyfolioanalytics.portfolio import Portfolio
+from pyfolioanalytics.risk import l_moment, owa_l_moment_weights
 
 
 def test_l_moments_cv():
-    with open("data/l_moments_cv.json", "r") as f:
+    with open("data/l_moments_cv.json") as f:
         cv_data = json.load(f)
 
     T = cv_data["T"]
@@ -31,7 +33,7 @@ def test_l_moments_cv():
 
 
 def test_robust_covariance_cv():
-    with open("data/l_moments_cv.json", "r") as f:
+    with open("data/l_moments_cv.json") as f:
         cv_data = json.load(f)
 
     R_df = pd.DataFrame(cv_data["returns"])

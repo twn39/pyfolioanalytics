@@ -1,6 +1,7 @@
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio, MultLayerPortfolio, RegimePortfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import MultLayerPortfolio, Portfolio, RegimePortfolio
 
 
 def test_group_constraints(stocks_data):

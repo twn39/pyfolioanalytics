@@ -1,6 +1,7 @@
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio, MultLayerPortfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import MultLayerPortfolio, Portfolio
 
 
 def test_multilayer_optimization(stocks_data):

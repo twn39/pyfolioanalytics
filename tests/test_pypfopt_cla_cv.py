@@ -1,12 +1,14 @@
-import numpy as np
 import json
 import os
+
+import numpy as np
+
 from pyfolioanalytics.cla import CLA
 
 
 def test_cla_parity_with_pypfopt():
     json_path = os.path.join("data", "pypfopt_cla_cv.json")
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     mu = np.array(data["mu"])

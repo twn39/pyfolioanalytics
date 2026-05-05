@@ -1,16 +1,18 @@
-import numpy as np
-import pandas as pd
 import json
 import os
-from pyfolioanalytics.rmt import denoise_covariance
-from pyfolioanalytics.portfolio import Portfolio
+
+import numpy as np
+import pandas as pd
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
+from pyfolioanalytics.rmt import denoise_covariance
 
 
 def test_rmt_parity_with_julia():
     # Load ground truth generated from Julia/PortfolioOptimisers logic
     json_path = os.path.join("data", "rmt_cv.json")
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     sigma_raw = np.array(data["sigma_raw"])

@@ -1,16 +1,17 @@
 import numpy as np
-from pyfolioanalytics.risk import (
-    VaR,
-    ES,
-    EVaR,
-    max_drawdown,
-    average_drawdown,
-    CDaR,
-    calculate_drawdowns,
-    risk_contribution,
-)
+
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.random_portfolios import random_portfolios
+from pyfolioanalytics.risk import (
+    ES,
+    CDaR,
+    EVaR,
+    VaR,
+    average_drawdown,
+    calculate_drawdowns,
+    max_drawdown,
+    risk_contribution,
+)
 
 
 def test_drawdowns(stocks_data):

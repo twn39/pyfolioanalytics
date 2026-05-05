@@ -1,6 +1,7 @@
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_random_portfolios_optimization(stocks_data):

@@ -1,7 +1,8 @@
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
-from pyfolioanalytics.risk import numerical_risk_contribution, CVaR, MAD
+from pyfolioanalytics.portfolio import Portfolio
+from pyfolioanalytics.risk import MAD, CVaR, numerical_risk_contribution
 
 
 def test_numerical_risk_contribution_euler(stocks_data):

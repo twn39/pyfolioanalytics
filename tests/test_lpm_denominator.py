@@ -15,7 +15,6 @@ import numpy as np
 
 from pyfolioanalytics.risk import LPM
 
-
 # ── Fixed test data ───────────────────────────────────────────────────────────
 # Use a small, manually verifiable dataset so expected values can be computed
 # by hand and cross-checked against R.

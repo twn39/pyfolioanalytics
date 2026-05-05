@@ -78,7 +78,7 @@ def plot_random_portfolios(
     for i in range(n_ports):
         w = w_mat[i]
         measures = calculate_objective_measures(w, moments, objectives, R=R_vals)
-        
+
         # Default fallbacks if the measure wasn't calculated (e.g., objective disabled)
         ret = measures.get(return_col, np.dot(w, moments["mu"]).item())
         if risk_col in measures:
@@ -86,7 +86,7 @@ def plot_random_portfolios(
         else:
             # Fallback to standard deviation if specific risk wasn't calculated
             risk = np.sqrt(max(0.0, np.dot(w.T, np.dot(moments["sigma"], w))))
-            
+
         returns_arr[i] = ret
         risks_arr[i] = risk
         ratio = ret / risk if risk > 1e-8 else 0.0
@@ -131,10 +131,10 @@ def plot_random_portfolios(
             w_opt = optimal_weights.values
         else:
             w_opt = optimal_weights
-            
+
         opt_measures = calculate_objective_measures(w_opt, moments, objectives, R=R_vals)
         opt_ret = opt_measures.get(return_col, np.dot(w_opt, moments["mu"]).item())
-        
+
         if risk_col in opt_measures:
             opt_risk = opt_measures[risk_col]
         else:
@@ -188,8 +188,8 @@ def plot_efficient_frontier(
 ) -> go.Figure:
     """
     Plot the efficient frontier curve and optionally the underlying asset scatters.
-    If `annualize_factor` is provided (e.g., 252 for daily data), returns are multiplied 
-    by this factor, and risk measures are scaled appropriately (sqrt for volatility-based, 
+    If `annualize_factor` is provided (e.g., 252 for daily data), returns are multiplied
+    by this factor, and risk measures are scaled appropriately (sqrt for volatility-based,
     linear for drawdowns).
     """
     fig = go.Figure()
@@ -201,7 +201,7 @@ def plot_efficient_frontier(
         raise ValueError(
             f"frontier_data must contain {risk_col} and {return_col} columns"
         )
-        
+
     # Determine scaling factors
     ret_scale = 1.0
     risk_scale = 1.0
@@ -218,7 +218,7 @@ def plot_efficient_frontier(
                 risk_scale = 1.0
             else:
                 risk_scale = np.sqrt(annualize_factor) # default to sqrt
-        
+
         # Update axis titles to reflect annualization
         x_title_ext = f" (Annualized x{annualize_factor})" if risk_scale != 1.0 else ""
         y_title_ext = f" (Annualized x{annualize_factor})"
@@ -242,8 +242,8 @@ def plot_efficient_frontier(
             name="Efficient Frontier",
             line=dict(shape="spline", smoothing=1.3, width=2, color="gray"),
             marker=dict(
-                size=8, 
-                color=ratios, 
+                size=8,
+                color=ratios,
                 colorscale="Viridis",
                 showscale=True,
                 colorbar=dict(title="Return/Risk Ratio"),
@@ -257,9 +257,9 @@ def plot_efficient_frontier(
     if moments is not None and "mu" in moments and "sigma" in moments:
         mu = moments["mu"].flatten() * ret_scale
         sigma = moments["sigma"]
-        
+
         # Determine std deviation (annualized or period depending on inputs, usually matches frontier)
-        # Note: if risk_col is not StdDev, plotting assets on the same X-axis might be mathematically inconsistent 
+        # Note: if risk_col is not StdDev, plotting assets on the same X-axis might be mathematically inconsistent
         # unless we compute the specific risk measure for each asset. For simplicity, we approximate with StdDev * scale
         asset_sd = np.sqrt(np.diag(sigma)) * (np.sqrt(annualize_factor) if annualize_factor else 1.0)
         asset_returns = mu
@@ -307,7 +307,7 @@ def plot_efficient_frontier(
 
 
 def plot_risk_decomposition(
-    ccr: pd.Series, 
+    ccr: pd.Series,
     title: str = "Component Contribution to Risk",
     percentage: bool = True,
     erc_line: bool = False,
@@ -360,14 +360,14 @@ def plot_risk_decomposition(
                 annotation_position="top right",
                 opacity=0.8
             )
-            
+
     # Add custom budget markers if provided
     if custom_budget is not None and percentage:
         if isinstance(custom_budget, dict):
             budget_series = pd.Series(custom_budget)
         else:
             budget_series = custom_budget
-            
+
         # Reindex to match sorted data order
         budget_sorted = budget_series.reindex(data_sorted.index).fillna(0)
         fig.add_trace(
@@ -405,7 +405,7 @@ def plot_factor_risk_decomposition(
     fig = go.Figure()
 
     total_risk = factor_decomp_result.get("total", 0.0)
-    
+
     if percentage and total_risk > 0:
         factor_contrib = factor_decomp_result["pcr_factor"]
         resid_contrib = factor_decomp_result["pcr_residual"]
@@ -549,28 +549,28 @@ def plot_network_allocation(
         import networkx as nx
     except ImportError:
         raise ImportError("The 'networkx' package is required to plot network allocations. Please install it using 'pip install networkx'.")
-        
+
     # 1. Filter: Build distance matrix and extract MST
     corr = R.corr().values
     dist = np.sqrt(0.5 * (1 - corr))
     np.fill_diagonal(dist, 0)
-    
+
     G = nx.Graph()
     assets = list(weights.index)
     N = len(assets)
-    
+
     # Build fully connected graph
     for i in range(N):
         G.add_node(i, label=assets[i], weight=weights.iloc[i])
         for j in range(i + 1, N):
             G.add_edge(i, j, weight=dist[i, j], corr=corr[i, j])
-            
+
     # Extract Minimum Spanning Tree (based on minimal distance -> maximum correlation)
     mst = nx.minimum_spanning_tree(G, weight="weight")
-    
+
     # 2. Calculate Spring Layout (highly correlated assets pull each other closer)
     pos = nx.spring_layout(mst, weight="weight", seed=42)
-    
+
     # 3. Construct Plotly Render Data
     edge_x, edge_y = [], []
     for edge in mst.edges():
@@ -578,61 +578,61 @@ def plot_network_allocation(
         x1, y1 = pos[edge[1]]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
-        
+
     node_x = [pos[i][0] for i in range(N)]
     node_y = [pos[i][1] for i in range(N)]
-    
+
     # Map weights to sizes and colors
     # Ensure minimum size for visibility, scale up proportionally
     w_vals = weights.values
     node_text = [f"{assets[i]}<br>Weight: {w_vals[i]:.2%}" for i in range(N)]
     # Scaling factor for node sizes
-    node_size = [max(18, w_vals[i] * 120) for i in range(N)] 
-    
+    node_size = [max(18, w_vals[i] * 120) for i in range(N)]
+
     fig = go.Figure()
-    
+
     # Draw Edges
     fig.add_trace(go.Scatter(
-        x=edge_x, y=edge_y, 
-        line=dict(width=1.5, color='#888'), 
-        hoverinfo='none', 
+        x=edge_x, y=edge_y,
+        line=dict(width=1.5, color='#888'),
+        hoverinfo='none',
         mode='lines',
         name='MST Connections'
     ))
-    
+
     # Draw Nodes
     fig.add_trace(go.Scatter(
-        x=node_x, y=node_y, 
-        mode='markers+text', 
-        text=assets, 
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=assets,
         textfont=dict(
             family="sans serif",
             size=11,
             color="black"
         ),
-        hovertext=node_text, 
+        hovertext=node_text,
         hoverinfo='text',
         textposition="top center",
         name='Assets',
         marker=dict(
-            showscale=True, 
-            colorscale='YlGnBu', 
-            color=w_vals, 
+            showscale=True,
+            colorscale='YlGnBu',
+            color=w_vals,
             size=node_size,
-            line=dict(width=1.5, color='DarkSlateGrey'), 
+            line=dict(width=1.5, color='DarkSlateGrey'),
             colorbar=dict(title="Allocation Weight", tickformat=".1%")
         )
     ))
-    
+
     fig.update_layout(
-        title=title, 
-        showlegend=False, 
-        template="plotly_white", 
+        title=title,
+        showlegend=False,
+        template="plotly_white",
         hovermode="closest",
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
     )
-    
+
     return fig
 
 
@@ -643,21 +643,21 @@ def plot_return_histogram(
 ) -> go.Figure:
     """
     Plot a histogram of portfolio returns overlaid with a Kernel Density Estimate (KDE).
-    Adds vertical lines indicating Value at Risk (VaR) and Conditional Value at Risk (CVaR/ES) 
+    Adds vertical lines indicating Value at Risk (VaR) and Conditional Value at Risk (CVaR/ES)
     at the specified significance level alpha.
     """
     import plotly.figure_factory as ff
-    
+
     # Drop NaNs
     rets = returns.dropna()
     if len(rets) == 0:
         return go.Figure()
 
     # Calculate VaR (historical simulation)
-    # Note: VaR/CVaR in risk.py are defined on losses (positive values), 
+    # Note: VaR/CVaR in risk.py are defined on losses (positive values),
     # but for the histogram X-axis, we want the actual negative return threshold.
     var_threshold = np.percentile(rets.values, alpha * 100)
-    
+
     # Calculate CVaR/ES (Expected Shortfall)
     # We can use the risk.py function which expects weights=1 and R=rets.values.reshape(-1, 1)
     # Alternatively, direct calculation:
@@ -672,7 +672,7 @@ def plot_return_histogram(
         show_rug=False,
         colors=["#1f77b4"]
     )
-    
+
     # Find max y to draw lines
     max_y = max([max(trace.y) for trace in fig.data if hasattr(trace, 'y') and trace.y is not None])
 
@@ -699,18 +699,18 @@ def plot_return_histogram(
             hoverinfo="name+x"
         )
     )
-    
+
     # Shade the tail region
     # Find KDE trace (it's a scatter trace added by create_distplot)
     kde_trace = next((trace for trace in fig.data if getattr(trace, 'type', '') == 'scatter' and getattr(trace, 'mode', '') == "lines" and getattr(trace, 'name', '') == "Returns"), None)
     if kde_trace is not None:
         x_kde = np.array(kde_trace.x)
         y_kde = np.array(kde_trace.y)
-        
+
         tail_mask = x_kde <= var_threshold
         x_tail = x_kde[tail_mask]
         y_tail = y_kde[tail_mask]
-        
+
         if len(x_tail) > 0:
             fig.add_trace(
                 go.Scatter(
@@ -746,7 +746,7 @@ def plot_return_histogram(
 
 
 def plot_performance(
-    returns: pd.Series, 
+    returns: pd.Series,
     title: str = "Portfolio Performance",
 ) -> go.Figure:
     """
@@ -795,7 +795,7 @@ def plot_performance(
         row=2,
         col=1,
     )
-    
+
     fig.update_layout(
         title=title, height=700, hovermode="x unified", template="plotly_white",
         legend=dict(
@@ -818,21 +818,21 @@ def plot_performance(
 
 
 def plot_underwater_drawdown(
-    returns: pd.Series, 
+    returns: pd.Series,
     title: str = "Underwater Drawdown Analysis",
     alpha: float = 0.05
 ) -> go.Figure:
     """
     Plot a comprehensive two-pane underwater drawdown chart.
     Top Pane: Historical Compounded Cumulative Returns.
-    Bottom Pane: Historical Uncompounded (Absolute) Drawdown overlaid with key risk metrics 
+    Bottom Pane: Historical Uncompounded (Absolute) Drawdown overlaid with key risk metrics
     (Max Drawdown, CDaR, Average Drawdown, UCI).
     """
-    from .risk import CDaR, UCI, average_drawdown, max_drawdown
-    
+    from .risk import UCI, CDaR, average_drawdown, max_drawdown
+
     # 1. Calculate Compounded Cumulative Returns (Wealth)
     cum_returns = (1 + returns).cumprod()
-    
+
     # 2. Calculate Uncompounded Drawdown
     uncomp_cum = returns.cumsum()
     rolling_max_uncomp = np.maximum(0, uncomp_cum.cummax())
@@ -873,25 +873,25 @@ def plot_underwater_drawdown(
         row=2,
         col=1,
     )
-    
+
     # Bottom Pane: Overlay Metrics
     w_dummy = np.array([1.0])
     r_mat = returns.values.reshape(-1, 1)
-    
+
     mdd = -max_drawdown(w_dummy, r_mat)
     avg_dd = -average_drawdown(w_dummy, r_mat)
     cdar = -CDaR(w_dummy, r_mat, p=1-alpha)
     uci = -UCI(w_dummy, r_mat)
-    
+
     metrics = [
         ("Average Drawdown", avg_dd, "#2ca02c", "solid"), # Green
         ("Ulcer Index", uci, "#9467bd", "dash"), # Purple
         (f"CDaR ({(1-alpha):.0%})", cdar, "#e377c2", "solid"), # Pink
         ("Maximum Drawdown", mdd, "#7f7f7f", "dashdot"), # Gray
     ]
-    
+
     metrics.sort(key=lambda x: x[1], reverse=True)
-    
+
     for name, val, color, dash in metrics:
         fig.add_trace(
             go.Scatter(

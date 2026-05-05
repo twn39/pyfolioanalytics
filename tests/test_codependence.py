@@ -1,4 +1,5 @@
 import numpy as np
+
 from pyfolioanalytics.codependence import get_codependence_matrix, get_distance_matrix
 
 
@@ -49,8 +50,8 @@ def test_distance_matrix():
 
 
 def test_custom_distance(stocks_data):
-    from pyfolioanalytics.portfolio import Portfolio
     from pyfolioanalytics.optimize import optimize_portfolio
+    from pyfolioanalytics.portfolio import Portfolio
 
     R = stocks_data.iloc[:, :4]
     port = Portfolio(assets=list(R.columns))

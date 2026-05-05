@@ -1,7 +1,8 @@
-import pandas as pd
 import numpy as np
-from pyfolioanalytics.portfolio import Portfolio, MultLayerPortfolio
+import pandas as pd
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import MultLayerPortfolio, Portfolio
 
 
 def test_multilayer_with_raw_assets_mixed():

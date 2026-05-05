@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.moments import set_portfolio_moments, M3_SFM, M4_SFM
+
+from pyfolioanalytics.moments import M3_SFM, M4_SFM, set_portfolio_moments
 from pyfolioanalytics.portfolio import Portfolio
 
 
@@ -56,7 +57,7 @@ def test_comoments_shrinkage_integration():
 def test_comoments_cv():
     import json
 
-    with open("data/comoments_cv.json", "r") as f:
+    with open("data/comoments_cv.json") as f:
         cv_data = json.load(f)
 
     R_raw = np.array(cv_data["returns"])

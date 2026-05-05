@@ -19,7 +19,6 @@ import pytest
 
 from pyfolioanalytics import MultLayerPortfolio, Portfolio, SubPortfolioConfig, optimize_portfolio
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 1.  SubPortfolioConfig — dataclass
 # ──────────────────────────────────────────────────────────────────────────────

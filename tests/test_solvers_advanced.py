@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+
 from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.solvers import solve_global_heuristic
 

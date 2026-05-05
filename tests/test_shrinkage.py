@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.moments import set_portfolio_moments
 from sklearn.covariance import ledoit_wolf
+
+from pyfolioanalytics.moments import set_portfolio_moments
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_ledoit_wolf_shrinkage():

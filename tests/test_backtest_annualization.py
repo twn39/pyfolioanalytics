@@ -6,7 +6,6 @@ import pytest
 
 from pyfolioanalytics.backtest import BacktestResult, _infer_periods_per_year
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_result(rets: pd.Series) -> BacktestResult:

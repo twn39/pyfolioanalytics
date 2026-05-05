@@ -94,7 +94,7 @@ class ConvexOptimizer:
 
         # 7. Position Limits (max_pos)
         # To strictly guarantee max_pos, it requires MIQP (Mixed-Integer Quadratic Programming) which fails on open-source solvers (ECOS/SCS).
-        # We handle this natively and gracefully via a Two-Step Alternating Heuristic in optimize.py 
+        # We handle this natively and gracefully via a Two-Step Alternating Heuristic in optimize.py
         # or via global heuristics in solvers.py. Do not use boolean variables here.
         pass
 
@@ -105,7 +105,7 @@ class ConvexOptimizer:
             p_norm = c.get("p_norm", 2)
             w_b = self._get_benchmark_weights(te_benchmark)
             diff = w - kappa * w_b
-            
+
             if p_norm == 2:
                 # Traditional L2 Tracking Error scaled by covariance
                 sigma = self.moments["sigma"]
@@ -169,12 +169,12 @@ class ConvexOptimizer:
         """
         if not prob.is_dcp() and not prob.is_dqcp():
             raise ValueError("Problem does not follow Disciplined Convex Programming (DCP) rules.")
-            
+
         solver = self.kwargs.get("solver")
         solver_kwargs = self.kwargs.get("solver_kwargs", {"verbose": False})
         # Default fallback solvers order: CLARABEL (modern interior point, highly stable), OSQP, SCS (good for exponential cones but lower precision)
         fallback_solvers = [getattr(cp, "CLARABEL", "CLARABEL"), getattr(cp, "OSQP", "OSQP"), getattr(cp, "SCS", "SCS")]
-        
+
         # 1. If user explicitly specified a solver
         if solver is not None:
             if isinstance(solver, str):
@@ -186,7 +186,7 @@ class ConvexOptimizer:
             except Exception as e:
                 import warnings
                 warnings.warn(f"User-specified solver {solver} failed ({str(e)}), attempting fallback solvers.")
-                
+
         # 2. Cascade through fallback solvers
         for fb_solver in fallback_solvers:
             if fb_solver in cp.installed_solvers():
@@ -197,7 +197,7 @@ class ConvexOptimizer:
                         return
                 except Exception:
                     continue
-                    
+
         # 3. Ultimate fallback to default CVXPY solve
         try:
             prob.solve(**solver_kwargs)
@@ -291,7 +291,7 @@ class ConvexOptimizer:
             self.objective_terms.append(cp.quad_form(self.w, self.moments["sigma"]))
 
         prob = cp.Problem(cp.Minimize(sum(self.objective_terms)), self.cp_constraints)
-        
+
         try:
             self._execute_solve(prob)
         except Exception as e:
@@ -310,13 +310,13 @@ class ConvexOptimizer:
         b = risk_budget_obj.get("arguments", {}).get("target")
         if b is None:
             b = np.full(self.n, 1.0 / self.n)  # default ERC
-        
+
         # 2. Constraints setup
         kappa = cp.sum(self.w)
         # Prevent log(0) domain errors in CVXPY
         self.add_constraint(self.w >= 1e-8)
         self._build_base_constraints(kappa=kappa)
-        
+
         # Process Return Objective Term if any (usually not for pure parity)
         if return_obj is not None:
             ret_target = return_obj.get("target")
@@ -328,14 +328,14 @@ class ConvexOptimizer:
         risk_name = risk_budget_obj.get("name", "StdDev")
         if risk_name in ["Variance"]:
             risk_name = "StdDev"
-            
+
         strategy_cls = RISK_STRATEGIES.get(risk_name)
         if not strategy_cls:
             raise ValueError(f"Unsupported convex risk measure for exact Risk Parity: {risk_name}")
-            
+
         strategy = strategy_cls()
         risk_term = strategy.build(self, risk_budget_obj.get("arguments", {}))
-        
+
         # 4. Objective = Risk(w) - \sum b_i log(w_i)
         if isinstance(strategy, MeanVarianceStrategy):
             # Variance is degree 2, coefficient is 0.5
@@ -343,24 +343,24 @@ class ConvexOptimizer:
         else:
             # Other coherent risk measures are degree 1
             obj_expr = risk_term - cp.sum(cp.multiply(b, cp.log(self.w)))
-            
+
         prob = cp.Problem(cp.Minimize(obj_expr + sum(self.objective_terms)), self.cp_constraints)
-        
+
         try:
             self._execute_solve(prob)
         except Exception as e:
             return {"status": "failed", "weights": None, "message": str(e)}
-            
+
         if prob.status in ["optimal", "optimal_inaccurate"] and self.w.value is not None:
             # Normalize auxiliary variable to sum to target weight_sum (typically 1.0)
             real_weights = self.w.value / np.sum(self.w.value)
-            
+
             target_sum = self.constraints.get("min_sum", 1.0)
             if target_sum != -np.inf:
                  real_weights *= target_sum
         else:
             real_weights = None
-            
+
         return {"status": prob.status, "weights": real_weights, "obj_value": prob.value}
 
     def _solve_ratio(
@@ -380,11 +380,11 @@ class ConvexOptimizer:
         if not strategy_cls:
             raise ValueError(f"Unsupported convex risk measure: {risk_name}")
         strategy = strategy_cls()
-        
+
         # In ratio optimization, strategy.build(self) receives w acting as y.
         # Since most coherent risk measures are positive homogeneous, Risk(y) = kappa * Risk(w).
         risk_term_y = strategy.build(self, risk_obj.get("arguments", {}))
-        
+
         # Enforce scaled risk <= 1
         self.add_constraint(risk_term_y <= 1.0)
 
@@ -396,7 +396,7 @@ class ConvexOptimizer:
             rf = self.kwargs["risk_free_rate"]
 
         obj_expr = -(self.w @ self.mu_robust - self.ret_uncertainty - kappa * rf)
-        
+
         # Add turnover/ptc penalties scaled appropriately if they were added to objective_terms
         prob = cp.Problem(cp.Minimize(obj_expr + sum(self.objective_terms)), self.cp_constraints)
 

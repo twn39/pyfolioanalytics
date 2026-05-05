@@ -1,7 +1,8 @@
 import numpy as np
 import riskfolio as rp
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_cvar_risk_parity_cv(stocks_data):

@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
-from pyfolioanalytics.moments import set_portfolio_moments
+
 from pyfolioanalytics.factors import ac_ranking
+from pyfolioanalytics.moments import set_portfolio_moments
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_ac_ranking_logic():

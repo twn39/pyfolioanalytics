@@ -5,7 +5,6 @@ import pandas as pd
 
 from pyfolioanalytics.solvers import solve_milp_cardinality
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 def _make_correlated_moments(n: int = 5, seed: int = 0) -> tuple:

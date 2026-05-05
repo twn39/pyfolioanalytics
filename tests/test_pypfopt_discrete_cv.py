@@ -1,7 +1,8 @@
-import pandas as pd
 import numpy as np
-from pyfolioanalytics.discrete_allocation import DiscreteAllocation as PA_DA
+import pandas as pd
 from pypfopt.discrete_allocation import DiscreteAllocation as PP_DA
+
+from pyfolioanalytics.discrete_allocation import DiscreteAllocation as PA_DA
 
 
 def test_discrete_allocation_pypfopt_parity():

@@ -1,6 +1,7 @@
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.backtest import backtest_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_realistic_backtest_drift():

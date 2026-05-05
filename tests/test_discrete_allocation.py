@@ -1,4 +1,5 @@
 import pandas as pd
+
 from pyfolioanalytics.discrete_allocation import DiscreteAllocation, get_latest_prices
 
 

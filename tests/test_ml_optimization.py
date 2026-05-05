@@ -1,8 +1,9 @@
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
 import riskfolio as rp
-from pyfolioanalytics.ml import hrp_optimization, herc_optimization, nco_optimization
+
+from pyfolioanalytics.ml import herc_optimization, hrp_optimization, nco_optimization
 
 
 # Custom fixture: applies dayfirst parsing and column renaming required by this module's tests

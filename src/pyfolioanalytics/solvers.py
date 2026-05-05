@@ -15,7 +15,7 @@ def create_penalized_objective(
 ):
     from .optimize import calculate_objective_measures
     n = len(moments["mu"])
-    
+
     def objective_fn(w):
         measures = calculate_objective_measures(w, moments, objectives, R=R)
         out = 0.0
@@ -26,21 +26,21 @@ def create_penalized_objective(
             if not obj.get("enabled", True):
                 continue
             mult = obj.get("multiplier", 1.0)
-            
+
             # (1) Return Objective
             if obj["type"] == "return":
                 val = measures.get(obj["name"], 0.0)
                 if "target" in obj and obj["target"] is not None:
                     out += PENALTY * abs(mult) * abs(val - obj["target"])
                 out += mult * val
-                
+
             # (2) Risk / Turnover Objective
             elif obj["type"] in ["risk", "turnover"]:
                 val = measures.get(obj["name"], 0.0)
                 if "target" in obj and obj["target"] is not None:
                     out += PENALTY * abs(mult) * abs(val - obj["target"])
                 out += abs(mult) * val  # R uses abs() for risk multipliers
-                
+
             # (3) Risk Budget Objective
             elif obj["type"] == "risk_budget":
                 rc_name = f"pct_contrib_{obj['name']}"
@@ -53,7 +53,7 @@ def create_penalized_objective(
                     if "min_prisk" in obj and obj["min_prisk"] is not None:
                         violations = np.maximum(0, obj["min_prisk"] - pct_rc)
                         out += PENALTY * mult * np.sum(violations)
-                        
+
                     # Concentration
                     if obj.get("min_difference"):
                         max_diff = np.sqrt(np.sum((pct_rc / 100.0)**2))
@@ -62,7 +62,7 @@ def create_penalized_objective(
                         act_hhi = np.sum((pct_rc / 100.0)**2)
                         min_hhi = np.sum(np.full(n, 1.0/n)**2)
                         out += PENALTY * mult * abs(act_hhi - min_hhi)
-            
+
             # (4) Weight Concentration Objective (HHI)
             # Mirrors R's constrained_objective.R lines 738-752.
             #
@@ -117,7 +117,7 @@ def create_penalized_objective(
                     out += PENALTY * mult * (val - obj_max)
 
         # --- Evaluate Constraints (Penalties) ---
-        
+
         # (1) Weight Sum
         sum_w = np.sum(w)
         if "max_sum" in constraints and constraints["max_sum"] is not None:
@@ -126,14 +126,14 @@ def create_penalized_objective(
         if "min_sum" in constraints and constraints["min_sum"] is not None:
             if sum_w < constraints["min_sum"]:
                 out += PENALTY * (constraints["min_sum"] - sum_w)
-                
+
         # (2) Position Limit Constraint
         max_pos = constraints.get("max_pos")
         if max_pos is not None:
             nzassets = np.sum(np.abs(w) > TOLERANCE)
             if nzassets > max_pos:
                 out += PENALTY * (nzassets - max_pos)
-                
+
         # (3) Turnover Constraint
         turnover_target = constraints.get("turnover_target")
         w_init = constraints.get("weight_initial")
@@ -142,13 +142,13 @@ def create_penalized_objective(
             # R penalizes if it exceeds +/- 5% of target
             if to < turnover_target * 0.95 or to > turnover_target * 1.05:
                 out += PENALTY * abs(to - turnover_target)
-                
+
         # (4) Transaction Cost
         ptc = constraints.get("ptc")
         if ptc is not None and w_init is not None:
             tc = np.sum(np.abs(w - w_init) * ptc)
             out += tc  # R does NOT multiply by PENALTY for transaction costs, just mult=1
-            
+
         # (5) Leverage Constraint
         leverage = constraints.get("leverage")
         if leverage is not None:
@@ -157,7 +157,7 @@ def create_penalized_objective(
                 out += (PENALTY / 100.0) * abs(lev_w - leverage)
 
         return out
-        
+
     return objective_fn
 
 def _apply_linear_constraints(cp_constraints, w, constraints):

@@ -1,12 +1,14 @@
 import json
+
 import numpy as np
 import pandas as pd
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_tracking_error_cross_validation():
-    with open("data/te_cv.json", "r") as f:
+    with open("data/te_cv.json") as f:
         cv_data = json.load(f)
 
     R_data = np.array(cv_data["returns"])

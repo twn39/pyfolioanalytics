@@ -1,8 +1,10 @@
-import pandas as pd
-import numpy as np
 import os
-from pyfolioanalytics.portfolio import Portfolio
+
+import numpy as np
+import pandas as pd
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_noc_on_real_data():

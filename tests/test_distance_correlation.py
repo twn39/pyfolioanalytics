@@ -11,6 +11,7 @@ Verifies:
 import time
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from pyfolioanalytics.codependence import (
@@ -20,8 +21,6 @@ from pyfolioanalytics.codependence import (
     _distance_correlation_matrix,
     get_codependence_matrix,
 )
-import pandas as pd
-
 
 # ── Reference (original loop) ─────────────────────────────────────────────────
 

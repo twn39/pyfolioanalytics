@@ -1,11 +1,13 @@
 import json
+
 import numpy as np
 import pandas as pd
+
 from pyfolioanalytics.moments import ccc_garch_moments
 
 
 def load_real_cv_data():
-    with open("data/garch_real_cv.json", "r") as f:
+    with open("data/garch_real_cv.json") as f:
         return json.load(f)
 
 
@@ -45,8 +47,8 @@ def test_ccc_garch_real_data_cv():
 
 
 def test_garch_optimization_integration():
-    from pyfolioanalytics.portfolio import Portfolio
     from pyfolioanalytics.optimize import optimize_portfolio
+    from pyfolioanalytics.portfolio import Portfolio
 
     data = load_real_cv_data()
     asset_names = [f"Asset_{i}" for i in range(13)]

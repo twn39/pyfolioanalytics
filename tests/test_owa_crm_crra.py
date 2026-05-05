@@ -12,7 +12,6 @@ from scipy.special import binom
 
 from pyfolioanalytics.risk import owa_l_moment_crm_weights
 
-
 # ── Reference implementation (verbatim from Riskfolio-Lib OwaWeights.py) ─────
 
 def _riskfolio_owa_l_moment(T: int, k: int) -> np.ndarray:

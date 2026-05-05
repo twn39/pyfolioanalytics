@@ -1,10 +1,12 @@
 import json
+
 import numpy as np
+
 from pyfolioanalytics.risk import risk_decomposition
 
 
 def load_cv_data():
-    with open("data/risk_decomposition_cv.json", "r") as f:
+    with open("data/risk_decomposition_cv.json") as f:
         return json.load(f)
 
 

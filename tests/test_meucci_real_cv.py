@@ -1,10 +1,12 @@
 import json
+
 import numpy as np
+
 from pyfolioanalytics.meucci import entropy_prog, meucci_moments
 
 
 def load_real_cv_data():
-    with open("data/meucci_real_cv.json", "r") as f:
+    with open("data/meucci_real_cv.json") as f:
         return json.load(f)
 
 

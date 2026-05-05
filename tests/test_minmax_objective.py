@@ -22,7 +22,6 @@ import pytest
 from pyfolioanalytics.optimize import optimize_portfolio
 from pyfolioanalytics.portfolio import Portfolio
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ──────────────────────────────────────────────────────────────────────────────

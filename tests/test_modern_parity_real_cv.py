@@ -1,14 +1,16 @@
+import json
+
 import numpy as np
 import pandas as pd
-import json
-from pyfolioanalytics.portfolio import Portfolio
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 
 
 def test_modern_parity_real_cv():
     # 1. Load Data
     edhec = pd.read_csv("data/edhec.csv")
-    with open("data/modern_risk_parity_real_cv.json", "r") as f:
+    with open("data/modern_risk_parity_real_cv.json") as f:
         cv_data = json.load(f)
 
     asset_names = cv_data["asset_names"]

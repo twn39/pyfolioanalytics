@@ -1,10 +1,12 @@
-import pytest
-import pandas as pd
-import numpy as np
 import json
 import os
-from pyfolioanalytics.portfolio import Portfolio
+
+import numpy as np
+import pandas as pd
+import pytest
+
 from pyfolioanalytics.optimize import optimize_portfolio
+from pyfolioanalytics.portfolio import Portfolio
 from pyfolioanalytics.risk import owa_gmd_weights
 
 
@@ -21,7 +23,7 @@ def test_owa_gmd_riskfolio_parity():
     if not os.path.exists(json_path):
         pytest.skip("owa_riskfolio_parity.json ground truth not found.")
 
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         gt = json.load(f)
 
     # Create Portfolio for pyfolioanalytics

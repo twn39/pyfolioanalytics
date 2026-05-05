@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
+
 from pyfolioanalytics.rmt import (
-    denoise_covariance,
-    gerber_statistic,
-    detone_covariance,
     bootstrap_uncertainty_set,
+    denoise_covariance,
+    detone_covariance,
+    gerber_statistic,
 )
 
 
